@@ -32,6 +32,7 @@ def generar_filtro_cm(client, proveedor_id: int):
       WHERE Proveedor = {proveedor_id}
         AND Centro IN ('0801','2801','2901','4601','1009')
         AND Material IS NOT NULL
+        AND Material!=30226
     ),
     pendientes AS (
       SELECT DISTINCT
@@ -41,6 +42,7 @@ def generar_filtro_cm(client, proveedor_id: int):
       WHERE Proveedor = {proveedor_id}
         AND Centro IN ('0801','2801','2901','4601','1009')
         AND Material IS NOT NULL
+        AND Material!=30226
     ),
     union_all AS (
       SELECT * FROM hist_me2l
@@ -54,6 +56,7 @@ def generar_filtro_cm(client, proveedor_id: int):
       FROM `{PROJECT_ID}.granier_staging.stg_ZLO12`
       WHERE Fecha = CURRENT_DATE()
         AND Centro IN ('0801','2801','2901','4601','1009')
+        AND Material!=30226
     )
     SELECT DISTINCT
       z.Centro,
