@@ -63,6 +63,7 @@ def generar_filtro_cm(client, proveedor_id: int):
       z.Material
     FROM zlo z
     JOIN union_all u USING (Material)
+    WHERE z.Material != 30226
     """
 
     return client.query(sql).to_dataframe()
