@@ -214,15 +214,12 @@ def ejecutar_pipeline(proveedor_id: int, consumo_extra_pct: float):
     # ENRIQUECER PEDIDOS PARA EL FRONT (Google Sheets)
     # ===============================================
     
-    # Año
-    pedidos_out["Ano"] = pd.to_datetime(pedidos_out["Fecha_Entrega"]).dt.year
+    # Semana ISO (usada también en pipeline original)
+    iso = pd.to_datetime(pedidos_out["Fecha_Entrega"]).dt.isocalendar()
+    pedidos_out["Ano"] = iso["year"].astype(int)
+    pedidos_out["Semana_Num"] = iso["week"].astype(int)
     
-    # Semana ISO ya está calculada → extraemos Semana_Num si no está
-    if "Semana_Num" not in pedidos_out.columns:
-        iso = pd.to_datetime(pedidos_out["Fecha_Entrega"]).dt.isocalendar()
-        pedidos_out["Semana_Num"] = iso["week"].astype(int)
-    
-    # Filas finales para Google Sheets
+    # Columnas finales
     columnas_sheets = [
         "Ano",
         "Semana_Num",
@@ -235,9 +232,8 @@ def ejecutar_pipeline(proveedor_id: int, consumo_extra_pct: float):
         "Fecha_Entrega",
         "Cantidad",
     ]
-    
-    pedidos_json = pedidos_out[columnas_sheets].to_dict(orient="records")
 
+    pedidos_json = pedidos_out[columnas_sheets].to_dict(orient="records")
 
     return {
         "proveedor": proveedor_id,
