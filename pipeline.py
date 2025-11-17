@@ -112,19 +112,24 @@ def ejecutar_pipeline(proveedor_id: int, consumo_extra_pct: float):
 
         print(f"   → Roturas detectadas: {len(roturas)}")
 
-        # --- generar nuevos pedidos ---
         nuevos = generar_pedidos_centros_desde_forecastV2(
             forecast_df=forecast,
             consumo_diario=consumo_diario,
             dias_stock_seguridad=dias_seg,
             dias_stock_objetivo=dias_obj,
         )
-
+        
+        # --- IMPORTANTE: este bloque estaba en el original ---
+        if not nuevos.empty:
+            print(f"🧾 Iter {i} – primeros pedidos generados:")
+            print(nuevos[['Centro', 'Material', 'Fecha_Carga', 'Fecha_Entrega', 'Fecha_Rotura']].head(5))
+        
+        # --- IMPORTANTE: este break estaba DETRÁS del bloque anterior ---
         if nuevos.empty:
-            print("⚠ Roturas sin generación de pedidos. Saliendo por seguridad.")
+            print("⚠ Hay roturas pero no se han generado nuevos pedidos. Salgo por seguridad.")
             break
-
-        # Ajustar mínimos logísticos
+        
+        # --- Ajuste sobre los nuevos ---
         nuevos = ajustar_pedidos_a_minimos_logisticos(nuevos, df_minimos)
 
         nuevos["Cantidad"] = nuevos["Cantidad_ajustada"]
