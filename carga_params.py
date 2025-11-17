@@ -59,11 +59,11 @@ def generar_filtro_cm(client, proveedor_id: int):
         AND Material!=30226
     )
     SELECT DISTINCT
-      z.Centro,
-      z.Material
-    FROM zlo z
-    JOIN union_all u USING (Material)
-    WHERE z.Material != 30226
+      u.Centro,
+      u.Material
+    FROM union_all u
+    JOIN zlo z USING (Centro, Material)
+    WHERE u.Material NOT IN (30226)
     """
 
     return client.query(sql).to_dataframe()
