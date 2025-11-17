@@ -205,9 +205,34 @@ def ejecutar_pipeline(proveedor_id: int, consumo_extra_pct: float):
     # -------------------------------------------------------------------------
     print("📤 Preparando JSON de salida...")
 
-    pedidos_json = pedidos_out[
-        ["Centro", "Material", "Fecha_Carga", "Fecha_Entrega", "Cantidad", "Fecha_Rotura"]
-    ].head(200).to_dict(orient="records")
+    # ===============================================
+    # ENRIQUECER PEDIDOS PARA EL FRONT (Google Sheets)
+    # ===============================================
+    
+    # Año
+    pedidos_out["Ano"] = pd.to_datetime(pedidos_out["Fecha_Entrega"]).dt.year
+    
+    # Semana ISO ya está calculada → extraemos Semana_Num si no está
+    if "Semana_Num" not in pedidos_out.columns:
+        iso = pd.to_datetime(pedidos_out["Fecha_Entrega"]).dt.isocalendar()
+        pedidos_out["Semana_Num"] = iso["week"].astype(int)
+    
+    # Filas finales para Google Sheets
+    columnas_sheets = [
+        "Ano",
+        "Semana_Num",
+        "Centro",
+        "Codigo_Base",
+        "Material",
+        "Texto_breve",
+        "N_antiguo_material",
+        "Fecha_Rotura",
+        "Fecha_Entrega",
+        "Cantidad",
+    ]
+    
+    pedidos_json = pedidos_out[columnas_sheets].to_dict(orient="records")
+
 
     return {
         "proveedor": proveedor_id,
