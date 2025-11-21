@@ -1,8 +1,14 @@
 from fastapi import FastAPI
+from google.cloud import bigquery
 from pipeline import ejecutar_pipeline
 
 app = FastAPI()
+bq = bigquery.Client()
 
+
+# -------------------------------------------------------------
+# 1) ENDPOINT PRINCIPAL DE PLANIFICACIÓN
+# -------------------------------------------------------------
 @app.get("/planificar")
 def planificar(
     proveedor_id: int,
@@ -19,12 +25,11 @@ def planificar(
         "consumo_extra_pct": consumo_extra_pct,
         "resultado": resultado
     }
-from fastapi import FastAPI
-from google.cloud import bigquery
 
-app = FastAPI()
-bq = bigquery.Client()
 
+# -------------------------------------------------------------
+# 2) ENDPOINT DE ROTURAS TOTALES PARA REVISIÓN MANUAL
+# -------------------------------------------------------------
 @app.get("/materiales_revisar")
 def materiales_revisar():
     query = """
@@ -55,4 +60,5 @@ def materiales_revisar():
         })
 
     return {"materiales_revisar": materiales}
+
 
