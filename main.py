@@ -31,22 +31,48 @@ def planificar(
 # 2) ENDPOINT DE ROTURAS TOTALES PARA REVISIÓN MANUAL
 # -------------------------------------------------------------
 @app.get("/materiales_revisar")
-def materiales_revisar():
-    query = """
-        SELECT
-            Centro,
-            Material,
-            dias_rotura_21d,
-            CMD_SAP,
-            CMD_Ajustado_Rotura,
-            ratio_ly,
-            CMD_Ajustado_Final
-        FROM `business-intelligence-444511.granier_logistica.v_ZLO12_curado`
-        WHERE Flag_Rotura_Total = 1
-        AND Centro IN ("0801","4601","2901","2801","1009")
+def materiales_revisar(proveedor_id: int):
+
+    client = bigquery.Client()
+
+    # 1) Reutilizamos exactamente el mismo filtro CM
+    df_cm = generar_filtro_cm(client, proveedor_id)
+
+    if df_cm.empty:
+        return {
+            "proveedor_id": proveedor_id,
+            "materiales_revisar": []
+        }
+
+    # Convertimos a tu lista de pares CM
+    pares = [(row["Centro"], row["Material"]) for _, row in df_cm.iterrows()]
+
+    # 2) Construir lista con formato BIGQUERY
+    cm_structs = ",\n        ".join(
+        [f"STRUCT('{c}' AS Centro, {m} AS Material)" for c, m in pares]
+    )
+
+    # 3) Consulta limpia contra tu vista ya curada
+    query = f"""
+        WITH cm AS (
+          SELECT * FROM UNNEST([
+            {cm_structs}
+          ])
+        )
+        SELECT 
+            z.Centro,
+            z.Material,
+            z.dias_rotura_21d,
+            z.CMD_SAP,
+            z.CMD_Ajustado_Rotura,
+            z.ratio_ly,
+            z.CMD_Ajustado_Final
+        FROM `business-intelligence-444511.granier_logistica.v_ZLO12_curado` z
+        JOIN cm USING (Centro, Material)
+        WHERE z.Flag_Rotura_Total = 1
     """
 
-    results = bq.query(query).result()
+    results = client.query(query).result()
 
     materiales = []
     for row in results:
@@ -60,6 +86,9 @@ def materiales_revisar():
             "cmd_ajustado_final": row.CMD_Ajustado_Final,
         })
 
-    return {"materiales_revisar": materiales}
+    return {
+        "proveedor_id": proveedor_id,
+        "materiales_revisar": materiales
+    }
 
 
