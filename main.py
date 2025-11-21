@@ -43,6 +43,7 @@ def materiales_revisar():
             CMD_Ajustado_Final
         FROM `business-intelligence-444511.granier_logistica.v_ZLO12_curado`
         WHERE Flag_Rotura_Total = 1
+        AND Centro IN ("0801","4601","2901","2801","1009")
     """
 
     results = bq.query(query).result()
