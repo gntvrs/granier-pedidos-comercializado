@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from google.cloud import bigquery
-from pipeline import ejecutar_pipeline, generar_filtro_cm
+from pipeline import ejecutar_pipeline
+from carga_params import generar_filtro_cm
 
 
 app = FastAPI()
