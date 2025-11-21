@@ -706,3 +706,196 @@ def ajustar_pedidos_por_restricciones_logisticas(pedidos_df: pd.DataFrame, dia_c
     pedidos["Comentarios"] = comentarios
 
     return pedidos
+
+def ajustar_pedidos_por_restricciones_logisticas_v2(
+    pedidos_df: pd.DataFrame,
+    dia_corte: int,
+    df_zlo12: pd.DataFrame,
+    df_minimos: pd.DataFrame
+) -> pd.DataFrame:
+    """
+    Ajusta fechas de pedidos cuando la rotura ocurre antes del día de corte
+    (por defecto miércoles) y recalcula la cantidad necesaria aplicando los
+    mínimos logísticos después del ajuste.
+
+    Parámetros:
+        pedidos_df : DataFrame con columnas:
+            ['Centro','Material','Fecha_Rotura','Fecha_Carga','Fecha_Entrega','Cantidad']
+        dia_corte : int (0=lunes, 1=martes, 2=miércoles...)
+        df_zlo12 : tabla original ZLO12 (no curada)
+        df_minimos : tabla de mínimos logísticos
+
+    Retorna:
+        pedidos ajustados en fechas y cantidad
+    """
+
+    if pedidos_df.empty:
+        print("⚠ No hay pedidos para ajustar por restricciones logísticas.")
+        return pedidos_df
+
+    pedidos = pedidos_df.copy()
+
+    pedidos["Fecha_Rotura"]  = pd.to_datetime(pedidos["Fecha_Rotura"]).dt.date
+    pedidos["Fecha_Carga"]   = pd.to_datetime(pedidos["Fecha_Carga"]).dt.date
+    pedidos["Fecha_Entrega"] = pd.to_datetime(pedidos["Fecha_Entrega"]).dt.date
+
+    hoy = date.today()
+    nuevas_filas = []
+
+    # ============
+    # Lookups
+    # ============
+    consumo_lookup = (
+        df_zlo12.set_index(["Centro","Material"])["Consumo_medio_diario"].to_dict()
+    )
+
+    dias_obj_lookup = (
+        df_zlo12.set_index(["Centro","Material"])["Dias_stock_planificado"].to_dict()
+    )
+
+    for _, row in pedidos.iterrows():
+
+        centro   = row["Centro"]
+        material = row["Material"]
+
+        # valores necesarios
+        consumo  = consumo_lookup.get((centro, material))
+        dias_obj = dias_obj_lookup.get((centro, material))
+
+        # si no tenemos parámetros → no aplicamos ajustes complejos
+        if consumo is None or dias_obj is None:
+            nuevas_filas.append(row)
+            continue
+
+        fecha_rotura = row["Fecha_Rotura"]
+        dow = fecha_rotura.weekday()
+
+        # =====================================
+        # Caso 1: NO hay adelanto
+        # =====================================
+        if dow >= dia_corte:
+            nuevas_filas.append(row)
+            continue
+
+        # =====================================
+        # Caso 2: rotura temprana → adelantar pedido
+        # =====================================
+
+        # mover al miércoles de la semana anterior
+        dias_retro = dow + 5
+        nueva_fecha = fecha_rotura - timedelta(days=dias_retro)
+
+        # nunca antes de hoy
+        if nueva_fecha < hoy:
+            nueva_fecha = hoy
+
+        # cuánto hemos adelantado
+        dias_adelantados = (row["Fecha_Carga"] - nueva_fecha).days
+
+        # nuevos días de stock necesarios
+        dias_reales = dias_obj - dias_adelantados
+        if dias_reales < 1:
+            dias_reales = 1
+
+        # nueva cantidad
+        nueva_cantidad = consumo * dias_reales
+
+        # =====================================
+        # Reaplicar mínimos logísticos
+        # =====================================
+        temp = pd.DataFrame([{
+            "Centro": centro,
+            "Material": material,
+            "Fecha_Carga": nueva_fecha,
+            "Fecha_Entrega": nueva_fecha,
+            "Cantidad": nueva_cantidad
+        }])
+
+        temp = ajustar_pedidos_a_minimos_logisticos(temp, df_minimos)
+
+        # =====================================
+        # Escribir pedido ajustado
+        # =====================================
+        final_row = row.copy()
+        final_row["Fecha_Carga"]   = temp.iloc[0]["Fecha_Carga"]
+        final_row["Fecha_Entrega"] = temp.iloc[0]["Fecha_Entrega"]
+        final_row["Cantidad"]      = temp.iloc[0]["Cantidad_ajustada"]
+        final_row["Comentarios"]   = "📦 Adelantado por restricción logística + mínimos recalculados"
+
+        nuevas_filas.append(final_row)
+
+    return pd.DataFrame(nuevas_filas)
+
+
+def ajustar_pedidos_a_minimos_logisticos_v2(
+    pedidos_df: pd.DataFrame,
+    df_minimos: pd.DataFrame,
+    df_rotacion: pd.DataFrame
+) -> pd.DataFrame:
+    """
+    Ajusta los pedidos según reglas logísticas:
+      1) Redondear al múltiplo superior de capa (regla base)
+      2) Si la rotación es alta → redondear a palet completo
+           - Definición: rota > 1 palet cada 11 días → dias_stock_pal < 11
+    """
+
+    if pedidos_df.empty:
+        return pedidos_df
+
+    # Normalizamos materiales
+    pedidos = pedidos_df.copy()
+    pedidos["Material"] = pd.to_numeric(pedidos["Material"], errors="coerce").astype("Int64")
+
+    df_minimos.columns = [c.strip().lower() for c in df_minimos.columns]
+    df_minimos["material"] = pd.to_numeric(df_minimos["material"], errors="coerce").astype("Int64")
+
+    # Normalizar rotación
+    df_rotacion.columns = [c.strip().lower() for c in df_rotacion.columns]
+    df_rotacion["material"] = pd.to_numeric(df_rotacion["material"], errors="coerce").astype("Int64")
+
+    # --- Merge para traer capas y palets ---
+    merged = (
+        pedidos
+        .merge(df_minimos[["material", "cajas_capa"]], left_on="Material", right_on="material", how="left")
+        .merge(df_rotacion[["centro", "material", "cajas_pal", "dias_stock_pal"]],
+               left_on=["Centro","Material"],
+               right_on=["centro","material"],
+               how="left")
+    )
+
+    ajustes = []
+
+    for _, row in merged.iterrows():
+        cantidad = float(row["Cantidad"])
+        capa = float(row.get("cajas_capa") or 0)
+        palet = float(row.get("cajas_pal") or 0)
+        dias_stock_pal = row.get("dias_stock_pal")
+
+        # --- 1. Si NO tenemos datos → no tocamos nada
+        if pd.isna(cantidad):
+            ajustes.append(cantidad)
+            continue
+
+        # --- 2. REGLA DE ALTA ROTACIÓN → pedir PALET
+        if (not pd.isna(palet)) and palet > 0 and (not pd.isna(dias_stock_pal)):
+            if dias_stock_pal < 11:
+                # alta rotación → pedir múltiplo de palet
+                cantidad_ajustada = math.ceil(cantidad / palet) * palet
+                ajustes.append(cantidad_ajustada)
+                continue  # evitamos capa
+
+        # --- 3. SINO → regla estándar de capa
+        if (not pd.isna(capa)) and capa > 0:
+            cantidad_ajustada = math.ceil(cantidad / capa) * capa
+            ajustes.append(cantidad_ajustada)
+        else:
+            ajustes.append(cantidad)
+
+    merged["Cantidad_ajustada"] = ajustes
+
+    # limpieza
+    merged.drop(columns=["material", "centro"], inplace=True, errors="ignore")
+    merged = merged.loc[:, ~merged.columns.duplicated()]
+
+    return merged
+
