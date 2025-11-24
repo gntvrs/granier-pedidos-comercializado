@@ -1,6 +1,9 @@
 from fastapi import FastAPI
 from google.cloud import bigquery
+
 from pipeline import ejecutar_pipeline
+from pipeline_v2 import ejecutar_pipeline_v2        # ⬅️ añadimos esto
+
 from carga_params import generar_filtro_cm
 
 
@@ -9,7 +12,7 @@ bq = bigquery.Client()
 
 
 # -------------------------------------------------------------
-# 1) ENDPOINT PRINCIPAL DE PLANIFICACIÓN
+# 1) ENDPOINT PRINCIPAL DE PLANIFICACIÓN (V1)
 # -------------------------------------------------------------
 @app.get("/planificar")
 def planificar(
@@ -30,6 +33,32 @@ def planificar(
 
 
 # -------------------------------------------------------------
+# 1.1) NUEVO ENDPOINT DE PLANIFICACIÓN V2 (experimental)
+# -------------------------------------------------------------
+@app.get("/planificar_v2")
+def planificar_v2(
+    proveedor_id: int,
+    consumo_extra_pct: float = 0.0
+):
+    """
+    Versión experimental del pipeline (V2).
+    Lleva: CMD ajustado por rotura + estacionalidad + restricción logística V2 + CAP/PAL.
+    """
+
+    resultado = ejecutar_pipeline_v2(
+        proveedor_id=proveedor_id,
+        consumo_extra_pct=consumo_extra_pct
+    )
+
+    return {
+        "status": "OK_V2",
+        "proveedor_id": proveedor_id,
+        "consumo_extra_pct": consumo_extra_pct,
+        "resultado": resultado
+    }
+
+
+# -------------------------------------------------------------
 # 2) ENDPOINT DE ROTURAS TOTALES PARA REVISIÓN MANUAL
 # -------------------------------------------------------------
 @app.get("/materiales_revisar")
@@ -37,7 +66,7 @@ def materiales_revisar(proveedor_id: int):
 
     client = bigquery.Client()
 
-    # 1) Reutilizamos exactamente el mismo filtro CM
+    # 1) Reutilizamos el mismo filtro CM del pipeline
     df_cm = generar_filtro_cm(client, proveedor_id)
 
     if df_cm.empty:
@@ -46,15 +75,15 @@ def materiales_revisar(proveedor_id: int):
             "materiales_revisar": []
         }
 
-    # Convertimos a tu lista de pares CM
+    # Convertir a lista de pares CM
     pares = [(row["Centro"], row["Material"]) for _, row in df_cm.iterrows()]
 
-    # 2) Construir lista con formato BIGQUERY
+    # 2) Construcción dinámica para BigQuery
     cm_structs = ",\n        ".join(
         [f"STRUCT('{c}' AS Centro, {m} AS Material)" for c, m in pares]
     )
 
-    # 3) Consulta limpia contra tu vista ya curada
+    # 3) Query contra vista curada
     query = f"""
         WITH cm AS (
           SELECT * FROM UNNEST([
@@ -92,5 +121,6 @@ def materiales_revisar(proveedor_id: int):
         "proveedor_id": proveedor_id,
         "materiales_revisar": materiales
     }
+
 
 
