@@ -808,30 +808,31 @@ def ajustar_pedidos_a_minimos_logisticos_v2(
     ajustes = []
 
     for _, row in merged.iterrows():
-        cantidad = float(row["Cantidad"])
-        capa = float(row.get("cajas_capa") or 0)
-        palet = float(row.get("cajas_pal") or 0)
-        dias_stock_pal = row.get("dias_stock_pal")
-
-        # --- 1. Si NO tenemos datos → no tocamos nada
-        if pd.isna(cantidad):
+    
+        cantidad = float(row["Cantidad"]) if pd.notna(row["Cantidad"]) else 0
+    
+        capa = float(row["cajas_capa"]) if pd.notna(row["cajas_capa"]) else 0
+        palet = float(row["cajas_pal"]) if pd.notna(row["cajas_pal"]) else 0
+        dias_stock_pal = float(row["dias_stock_pal"]) if pd.notna(row["dias_stock_pal"]) else None
+    
+        # 1) Si no hay cantidad → lo dejamos igual
+        if cantidad <= 0:
             ajustes.append(cantidad)
             continue
-
-        # --- 2. REGLA DE ALTA ROTACIÓN → pedir PALET
-        if (not pd.isna(palet)) and palet > 0 and (not pd.isna(dias_stock_pal)):
-            if dias_stock_pal < 11:
-                # alta rotación → pedir múltiplo de palet
-                cantidad_ajustada = math.ceil(cantidad / palet) * palet
-                ajustes.append(cantidad_ajustada)
-                continue  # evitamos capa
-
-        # --- 3. SINO → regla estándar de capa
-        if (not pd.isna(capa)) and capa > 0:
+    
+        # 2) Regla PALET (alta rotación)
+        if palet > 0 and dias_stock_pal is not None and dias_stock_pal < 11:
+            cantidad_ajustada = math.ceil(cantidad / palet) * palet
+            ajustes.append(cantidad_ajustada)
+            continue
+    
+        # 3) Regla CAP (default)
+        if capa > 0:
             cantidad_ajustada = math.ceil(cantidad / capa) * capa
             ajustes.append(cantidad_ajustada)
         else:
             ajustes.append(cantidad)
+
 
     merged["Cantidad_ajustada"] = ajustes
 
@@ -840,6 +841,7 @@ def ajustar_pedidos_a_minimos_logisticos_v2(
     merged = merged.loc[:, ~merged.columns.duplicated()]
 
     return merged
+
 
 
 
