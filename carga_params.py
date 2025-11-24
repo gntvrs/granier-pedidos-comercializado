@@ -158,8 +158,8 @@ def cargar_datos_reales(
       Material,
       Puesto_de_trabajo,
       Un_Hora,
-      StockObj_Dias,
-      Grupo_de_Fabr
+      ` StockObj_Dias`,
+      ` Grupo_de_Fabr`
     FROM `{PROJECT_ID}.granier_logistica.Tbl_Produccion_Parmetros`
     """
 
