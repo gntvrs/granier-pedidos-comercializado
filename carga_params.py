@@ -2,6 +2,61 @@ from google.cloud import bigquery
 
 PROJECT_ID = "business-intelligence-444511"
 
+def generar_filtro_cm(client, proveedor_id: int):
+    """
+    Devuelve un DataFrame con todas las parejas Centro–Material
+    activas hoy según:
+        – Históricos ME2L
+        – Pedidos Pendientes
+        – ZLO12 (centros válidos hoy)
+    """
+
+    sql = f"""
+    WITH
+    hist_me2l AS (
+      SELECT DISTINCT
+        CAST(Material AS INT64) AS Material,
+        CAST(Centro AS STRING)  AS Centro
+      FROM `{PROJECT_ID}.granier_staging.stg_ME2L`
+      WHERE Proveedor = {proveedor_id}
+        AND Centro IN ('0801','2801','2901','4601','1009')
+        AND Material IS NOT NULL
+        AND Material!=30226
+    ),
+    pendientes AS (
+      SELECT DISTINCT
+        CAST(Material AS INT64) AS Material,
+        CAST(Centro AS STRING)  AS Centro
+      FROM `{PROJECT_ID}.granier_logistica.Tbl_Pedidos_Pendientes`
+      WHERE Proveedor = {proveedor_id}
+        AND Centro IN ('0801','2801','2901','4601','1009')
+        AND Material IS NOT NULL
+        AND Material!=30226
+    ),
+    union_all AS (
+      SELECT * FROM hist_me2l
+      UNION DISTINCT
+      SELECT * FROM pendientes
+    ),
+    zlo AS (
+      SELECT
+        CAST(Centro AS STRING)  AS Centro,
+        CAST(Material AS INT64) AS Material
+      FROM `{PROJECT_ID}.granier_staging.stg_ZLO12`
+      WHERE Fecha = CURRENT_DATE()
+        AND Centro IN ('0801','2801','2901','4601','1009')
+        AND Material!=30226
+    )
+    SELECT DISTINCT
+      u.Centro,
+      u.Material
+    FROM union_all u
+    JOIN zlo z USING (Centro, Material)
+    WHERE u.Material NOT IN (30226)
+    """
+
+    return client.query(sql).to_dataframe()
+
 def cargar_datos_reales(
     proveedor_id: int,
     consumo_extra_pct: float = 0.0
