@@ -93,9 +93,8 @@ def cargar_datos_reales(
 
     pares = [(row["Centro"], row["Material"]) for _, row in df_cm.iterrows()]
 
-
     # --------------------------------------------------------
-    # 2.2) Stock + Consumo solo para esos pares
+    # 2.2) Stock + Consumo desde v_ZLO12_curado (CAMBIARÁ en V2 final)
     # --------------------------------------------------------
     print("   → Cargando stock/consumo...")
 
@@ -112,19 +111,17 @@ def cargar_datos_reales(
     SELECT 
       z.Centro,
       z.Material,
-      z.Consumo_medio_diario,
-      z.Libre_util_centro + z.Cantidad_pdte_entrada - z.Cantidad_pdte_salida AS Stock,
-      z.Piezas_por_amasada AS cantidad_min_fabricacion
-    FROM `{PROJECT_ID}.granier_staging.stg_ZLO12` z
+      z.CMD_Ajustado_Final AS Consumo_medio_diario,
+      z.Stock AS Stock,
+      z.cantidad_min_fabricacion
+    FROM `{PROJECT_ID}.granier_logistica.v_ZLO12_curado` z
     JOIN cm USING (Centro, Material)
-    WHERE z.Fecha = CURRENT_DATE()
     """
 
     df_sc = client.query(sql_sc).to_dataframe()
 
     if df_sc.empty:
-        raise ValueError("No hay datos ZLO12 hoy para los materiales detectados.")
-
+        raise ValueError("No hay datos ZLO12 curado hoy para los materiales detectados.")
 
     # --------------------------------------------------------
     # 2.3) Ajuste del consumo
@@ -135,27 +132,24 @@ def cargar_datos_reales(
         for _, row in df_sc.iterrows()
     }
 
-
     # --------------------------------------------------------
-    # 2.4) Stock fábrica (centro 1004)
+    # 2.4) Stock fábrica (1004)
     # --------------------------------------------------------
     print("   → Cargando stock de fábrica...")
 
     sql_fabr = f"""
     SELECT 
       Material,
-      Libre_util_centro + Cantidad_pdte_entrada - Cantidad_pdte_salida AS Stock
-    FROM `{PROJECT_ID}.granier_staging.stg_ZLO12`
-    WHERE Fecha = CURRENT_DATE()
-      AND Centro = "1004"
+      Stock
+    FROM `{PROJECT_ID}.granier_logistica.v_ZLO12_curado`
+    WHERE Centro = "1004"
     """
 
     df_fabr = client.query(sql_fabr).to_dataframe()
     stock_fabrica = {row["Material"]: row["Stock"] for _, row in df_fabr.iterrows()}
 
-
     # --------------------------------------------------------
-    # 2.5) Parámetros de fabricación (Tbl_Produccion_Parametros)
+    # 2.5) Parámetros producción
     # --------------------------------------------------------
     print("   → Cargando parámetros de producción...")
 
@@ -164,26 +158,19 @@ def cargar_datos_reales(
       Material,
       Puesto_de_trabajo,
       Un_Hora,
-      ` StockObj_Dias`,
-      ` Grupo_de_Fabr`
+      StockObj_Dias,
+      Grupo_de_Fabr
     FROM `{PROJECT_ID}.granier_logistica.Tbl_Produccion_Parmetros`
     """
 
     df_param = client.query(sql_param).to_dataframe()
-    df_param.columns = [c.strip() for c in df_param.columns]  # Fix espacios
+    df_param.columns = [c.strip() for c in df_param.columns]
 
-    puesto_trabajo = {
-        row["Material"]: row["Puesto_de_trabajo"]
-        for _, row in df_param.iterrows()
-    }
-    grupo_de_fabr = {
-        row["Material"]: row["Grupo_de_Fabr"]
-        for _, row in df_param.iterrows()
-    }
-
+    puesto_trabajo = {row["Material"]: row["Puesto_de_trabajo"] for _, row in df_param.iterrows()}
+    grupo_de_fabr = {row["Material"]: row["Grupo_de_Fabr"] for _, row in df_param.iterrows()}
 
     # --------------------------------------------------------
-    # 2.6) Objetivo/seguridad por centro (Master_Logistica)
+    # 2.6) Objetivos / Seguridad centros
     # --------------------------------------------------------
     print("   → Cargando stock objetivo/seguridad por centro...")
 
@@ -198,8 +185,14 @@ def cargar_datos_reales(
 
     df_obj = client.query(sql_obj).to_dataframe()
 
-    dias_obj_por_centro = {row["Centro"]: int(row["Dias_Stock_Objetivo"] or 0) for _, row in df_obj.iterrows()}
-    dias_seg_por_centro = {row["Centro"]: int(row["Dias_Stock_Seguridad"] or 0) for _, row in df_obj.iterrows()}
+    dias_obj_por_centro = {
+        row["Centro"]: int(row["Dias_Stock_Objetivo"] or 0)
+        for _, row in df_obj.iterrows()
+    }
+    dias_seg_por_centro = {
+        row["Centro"]: int(row["Dias_Stock_Seguridad"] or 0)
+        for _, row in df_obj.iterrows()
+    }
 
     dias_stock_objetivo = {
         (row["Centro"], row["Material"]): dias_obj_por_centro.get(row["Centro"], 0)
@@ -211,9 +204,23 @@ def cargar_datos_reales(
         for _, row in df_sc.iterrows()
     }
 
+    # --------------------------------------------------------
+    # 2.7) Rotación CAP / PALET desde tu vista
+    # --------------------------------------------------------
+    print("   → Cargando info de rotación CAP/PALET...")
+
+    sql_rotacion = f"""
+    SELECT Centro, Material, cajas_cap, cajas_pal, dias_stock_cap, dias_stock_pal
+    FROM `{PROJECT_ID}.granier_logistica.Stock_Dias_CAP_PAL`
+    """
+
+    df_rotacion = client.query(sql_rotacion).to_dataframe()
+
+    # Filtrar solo materiales del proveedor
+    df_rotacion = df_rotacion.merge(df_sc[["Centro","Material"]], on=["Centro","Material"], how="inner")
 
     # --------------------------------------------------------
-    # DEVOLVER TODO LO NECESARIO PARA EL PIPELINE
+    # DEVOLVER TODO PARA EL PIPELINE V2
     # --------------------------------------------------------
     print("✅ Datos cargados correctamente.")
 
@@ -229,4 +236,6 @@ def cargar_datos_reales(
         "dias_stock_seguridad": dias_stock_seguridad,
         "puesto_trabajo": puesto_trabajo,
         "grupo_de_fabr": grupo_de_fabr,
+        "rotacion": df_rotacion  # 👈 NECESARIO PARA la función V2
     }
+
