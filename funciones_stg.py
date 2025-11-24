@@ -710,16 +710,13 @@ def ajustar_pedidos_por_restricciones_logisticas(pedidos_df: pd.DataFrame, dia_c
 def ajustar_pedidos_por_restricciones_logisticas_v2(
     pedidos_df: pd.DataFrame,
     dia_corte: int,
-    df_zlo12: pd.DataFrame
-) -> pd.DataFrame:
-    """
-    Ajusta fechas de pedidos cuando la rotura ocurre antes del día de corte.
-    Recalcula la cantidad teórica necesaria, pero NO aplica mínimos logísticos.
-    Eso se hace después a todos los pedidos de forma global.
-    """
+    consumo_diario: dict,
+    dias_stock_objetivo: dict
+):
+    import pandas as pd
+    from datetime import date, timedelta
 
     if pedidos_df.empty:
-        print("⚠ No hay pedidos para ajustar por restricciones logísticas.")
         return pedidos_df
 
     pedidos = pedidos_df.copy()
@@ -731,23 +728,12 @@ def ajustar_pedidos_por_restricciones_logisticas_v2(
     hoy = date.today()
     nuevas_filas = []
 
-    # ============
-    # Lookups
-    # ============
-    consumo_lookup = (
-        df_zlo12.set_index(["Centro","Material"])["Consumo_medio_diario"].to_dict()
-    )
-    dias_obj_lookup = (
-        df_zlo12.set_index(["Centro","Material"])["Dias_stock_planificado"].to_dict()
-    )
-
     for _, row in pedidos.iterrows():
-
         centro   = row["Centro"]
         material = row["Material"]
 
-        consumo  = consumo_lookup.get((centro, material))
-        dias_obj = dias_obj_lookup.get((centro, material))
+        consumo  = consumo_diario.get((centro, material))
+        dias_obj = dias_stock_objetivo.get((centro, material))
 
         if consumo is None or dias_obj is None:
             nuevas_filas.append(row)
@@ -756,39 +742,32 @@ def ajustar_pedidos_por_restricciones_logisticas_v2(
         fecha_rotura = row["Fecha_Rotura"]
         dow = fecha_rotura.weekday()
 
-        # ===== Caso 1: NO hay adelanto =====
+        # Caso donde NO adelanta
         if dow >= dia_corte:
             nuevas_filas.append(row)
             continue
 
-        # ===== Caso 2: rotura temprana → adelantar =====
+        # Adelanto
         dias_retro = dow + 5
         nueva_fecha = fecha_rotura - timedelta(days=dias_retro)
 
         if nueva_fecha < hoy:
             nueva_fecha = hoy
 
-        # Cuántos días se adelanta
         dias_adelantados = (row["Fecha_Carga"] - nueva_fecha).days
-
-        # Nuevos días de stock necesarios
         dias_reales = max(1, dias_obj - dias_adelantados)
 
-        # Nueva cantidad teórica
         nueva_cantidad = consumo * dias_reales
 
-        # === Actualizamos el pedido ===
-        final = row.copy()
-        final["Fecha_Carga"] = nueva_fecha
-        final["Fecha_Entrega"] = nueva_fecha
-        final["Cantidad"] = nueva_cantidad
-        final["Comentarios"] = "📦 Adelantado por restricción logística (recalculo cantidad teórica)"
+        final_row = row.copy()
+        final_row["Fecha_Carga"]   = nueva_fecha
+        final_row["Fecha_Entrega"] = nueva_fecha
+        final_row["Cantidad"]      = nueva_cantidad
+        final_row["Comentarios"]   = "📦 Adelantado por restricción logística (V2)"
 
-        nuevas_filas.append(final)
+        nuevas_filas.append(final_row)
 
     return pd.DataFrame(nuevas_filas)
-
-
 
 def ajustar_pedidos_a_minimos_logisticos_v2(
     pedidos_df: pd.DataFrame,
@@ -861,5 +840,6 @@ def ajustar_pedidos_a_minimos_logisticos_v2(
     merged = merged.loc[:, ~merged.columns.duplicated()]
 
     return merged
+
 
 
