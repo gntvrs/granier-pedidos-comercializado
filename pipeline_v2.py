@@ -292,6 +292,20 @@ def ejecutar_pipeline_v2(proveedor_id: int, consumo_extra_pct: float):
     # --------------------------------------------------------
     # 6.4 — Selección de columnas finales para Sheets / Front
     # --------------------------------------------------------
+
+    # ========================================================
+    # ORDEN FINAL del resultado (Año / Semana / Centro / Codigo_Base)
+    # ========================================================
+    # Asegurar que Ano y Semana_Num existen y son numéricos
+    out_p["Ano"] = pd.to_numeric(out_p["Ano"], errors="coerce")
+    out_p["Semana_Num"] = pd.to_numeric(out_p["Semana_Num"], errors="coerce")
+    
+    # Ordenar por año ascendente, semana ascendente, centro y código base
+    out_p = out_p.sort_values(
+        by=["Ano", "Semana_Num", "Centro", "Codigo_Base"],
+        ascending=[True, True, True, True]
+    ).reset_index(drop=True)
+
     columnas_sheets = [
         "Ano",
         "Semana_Num",
