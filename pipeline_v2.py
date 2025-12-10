@@ -46,7 +46,7 @@ def ejecutar_pipeline_v2(proveedor_id: int, consumo_extra_pct: float):
     df_minimos      = datos["minimos_logisticos"]
     df_rotacion     = datos["rotacion"]     # vista CAP/PAL
     cmd_sap_dict    = datos["cmd_sap"]             # nuevo
-
+    precio_pmv = datos["precio_pmv"]
 
     print(f"✔ Centros-material: {len(stock_centros)}")
     print(f"✔ Registros rotación CAP/PAL: {len(df_rotacion)}")
@@ -269,6 +269,24 @@ def ejecutar_pipeline_v2(proveedor_id: int, consumo_extra_pct: float):
     
         out_p["CMD_Sap"] = out_p.apply(_cmd_sap, axis=1)
         out_p["CMD_Ajustado"] = out_p.apply(_cmd_ajustado, axis=1)
+
+        # --------------------------------------------------------
+        # Precio estándar PMV (según Material y Centro)
+        # --------------------------------------------------------
+        def _precio_pmv(row):
+            return precio_pmv.get((row["Centro"], row["Material"]), None)
+        
+        out_p["Precio_estandar_PMV"] = out_p.apply(_precio_pmv, axis=1)
+
+        def _valor(row):
+            precio = row["Precio_estandar_PMV"]
+            cantidad = row["Cantidad"]
+            if precio is None or cantidad is None:
+                return None
+            return precio * cantidad
+        
+        out_p["Valor_total"] = out_p.apply(_valor, axis=1)
+
     
         # --------------------------------------------------------
         # 6.3 — Días de stock el día de llegada
@@ -319,8 +337,11 @@ def ejecutar_pipeline_v2(proveedor_id: int, consumo_extra_pct: float):
         "Cantidad",
         "CMD_Sap",
         "CMD_Ajustado",
-        "Dias_stock_llegada"
+        "Dias_stock_llegada",
+        "Precio_estandar_PMV",
+        "Valor_total"
     ]
+
     
     # Convertimos a JSON para el endpoint
     pedidos_json = out_p[columnas_sheets].to_dict(orient="records")
