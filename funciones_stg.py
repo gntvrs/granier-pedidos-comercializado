@@ -763,7 +763,15 @@ def ajustar_pedidos_por_restricciones_logisticas_v2(
         final_row["Fecha_Carga"]   = nueva_fecha
         final_row["Fecha_Entrega"] = nueva_fecha
         final_row["Cantidad"]      = nueva_cantidad
-        final_row["Comentarios"]   = "📦 Adelantado por restricción logística (V2)"
+        # Mantener comentarios previos si existieran
+        prev = final_row.get("Comentarios", "")
+        nuevo = "📦 Adelantado por restricción logística (V2)"
+
+        if prev:
+            final_row["Comentarios"] = prev + " • " + nuevo
+        else:
+            final_row["Comentarios"] = nuevo
+
 
         nuevas_filas.append(final_row)
 
@@ -774,28 +782,19 @@ def ajustar_pedidos_a_minimos_logisticos_v2(
     df_minimos: pd.DataFrame,
     df_rotacion: pd.DataFrame
 ) -> pd.DataFrame:
-    """
-    Ajusta los pedidos según reglas logísticas:
-      1) Redondear al múltiplo superior de capa (regla base)
-      2) Si la rotación es alta → redondear a palet completo
-           - Definición: rota > 1 palet cada 11 días → dias_stock_pal < 11
-    """
 
     if pedidos_df.empty:
         return pedidos_df
 
-    # Normalizamos materiales
     pedidos = pedidos_df.copy()
     pedidos["Material"] = pd.to_numeric(pedidos["Material"], errors="coerce").astype("Int64")
 
     df_minimos.columns = [c.strip().lower() for c in df_minimos.columns]
     df_minimos["material"] = pd.to_numeric(df_minimos["material"], errors="coerce").astype("Int64")
 
-    # Normalizar rotación
     df_rotacion.columns = [c.strip().lower() for c in df_rotacion.columns]
     df_rotacion["material"] = pd.to_numeric(df_rotacion["material"], errors="coerce").astype("Int64")
 
-    # --- Merge para traer capas y palets ---
     merged = (
         pedidos
         .merge(df_minimos[["material", "cajas_capa"]], left_on="Material", right_on="material", how="left")
@@ -806,6 +805,7 @@ def ajustar_pedidos_a_minimos_logisticos_v2(
     )
 
     ajustes = []
+    comentarios = []
 
     for _, row in merged.iterrows():
     
@@ -814,33 +814,44 @@ def ajustar_pedidos_a_minimos_logisticos_v2(
         capa = float(row["cajas_capa"]) if pd.notna(row["cajas_capa"]) else 0
         palet = float(row["cajas_pal"]) if pd.notna(row["cajas_pal"]) else 0
         dias_stock_pal = float(row["dias_stock_pal"]) if pd.notna(row["dias_stock_pal"]) else None
-    
-        # 1) Si no hay cantidad → lo dejamos igual
+        
+        comentario_prev = row.get("Comentarios", "") if "Comentarios" in row else ""
+
         if cantidad <= 0:
             ajustes.append(cantidad)
+            comentarios.append(comentario_prev)
             continue
-    
-        # 2) Regla PALET (alta rotación)
+
+        # 🔥 Ajuste a PALET (alta rotación)
         if palet > 0 and dias_stock_pal is not None and dias_stock_pal < 11:
             cantidad_ajustada = math.ceil(cantidad / palet) * palet
+            
+            nuevo = "Ajustado a PALET"
+            if comentario_prev:
+                comentarios.append(comentario_prev + " • " + nuevo)
+            else:
+                comentarios.append(nuevo)
+
             ajustes.append(cantidad_ajustada)
             continue
-    
-        # 3) Regla CAP (default)
+
+        # Ajuste a CAP
         if capa > 0:
             cantidad_ajustada = math.ceil(cantidad / capa) * capa
             ajustes.append(cantidad_ajustada)
+            comentarios.append(comentario_prev)
         else:
             ajustes.append(cantidad)
-
+            comentarios.append(comentario_prev)
 
     merged["Cantidad_ajustada"] = ajustes
+    merged["Comentarios"] = comentarios
 
-    # limpieza
     merged.drop(columns=["material", "centro"], inplace=True, errors="ignore")
     merged = merged.loc[:, ~merged.columns.duplicated()]
 
     return merged
+
 
 
 
