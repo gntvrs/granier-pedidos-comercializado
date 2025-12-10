@@ -278,6 +278,14 @@ def ejecutar_pipeline_v2(proveedor_id: int, consumo_extra_pct: float):
         
         out_p["Precio_estandar_PMV"] = out_p.apply(_precio_pmv, axis=1)
 
+        # === DEBUG PMV ===
+        mask_inf_pmv = out_p["Precio_estandar_PMV"].apply(lambda x: isinstance(x, float) and np.isinf(x))
+        print("PMV infinito encontrado en filas:", out_p.index[mask_inf_pmv].tolist()[:20])
+        
+        if mask_inf_pmv.any():
+            print(out_p.loc[mask_inf_pmv, ["Centro","Material","Precio_estandar_PMV","Cantidad","Valor_total"]].head())
+
+
         def _valor(row):
             precio = row["Precio_estandar_PMV"]
             cantidad = row["Cantidad"]
@@ -286,6 +294,8 @@ def ejecutar_pipeline_v2(proveedor_id: int, consumo_extra_pct: float):
             return precio * cantidad
         
         out_p["Valor_total"] = out_p.apply(_valor, axis=1)
+
+        
 
     
         # --------------------------------------------------------
@@ -368,21 +378,12 @@ def ejecutar_pipeline_v2(proveedor_id: int, consumo_extra_pct: float):
             out_p[col] = out_p[col].apply(
                 lambda x: None if isinstance(x, float) and (np.isnan(x) or np.isinf(x)) else x
             )
-
-    for col in columnas_sheets:
-        bad = out_p[col].apply(lambda x: isinstance(x, float) and (np.isnan(x) or np.isinf(x)))
-        if bad.any():
-            print("🔥 Columna problemática:", col)
-            print(out_p.loc[bad, [col, "Centro", "Material", "Fecha_Entrega", "Cantidad"]].head())
     
     # --------------------------------------------------------
     # 6.6 — RETURN FORMATO JSON PARA EL ENDPOINT
     # --------------------------------------------------------
 
-    mask_inf = np.isinf(out_p["Dias_stock_llegada"])
-    print("INF en Dias_stock_llegada:", out_p[mask_inf][["Centro","Material","Fecha_Entrega","Dias_stock_llegada","CMD_Ajustado"]].head())
-
-    
+   
     pedidos_json = out_p[columnas_sheets].to_dict(orient="records")
     
     return {
