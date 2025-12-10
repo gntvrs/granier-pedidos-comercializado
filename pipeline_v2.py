@@ -368,6 +368,12 @@ def ejecutar_pipeline_v2(proveedor_id: int, consumo_extra_pct: float):
             out_p[col] = out_p[col].apply(
                 lambda x: None if isinstance(x, float) and (np.isnan(x) or np.isinf(x)) else x
             )
+
+    for col in columnas_sheets:
+    bad = out_p[col].apply(lambda x: isinstance(x, float) and (np.isnan(x) or np.isinf(x)))
+    if bad.any():
+        print("🔥 Columna problemática:", col)
+        print(out_p.loc[bad, [col, "Centro", "Material", "Fecha_Entrega", "Cantidad"]].head())
     
     # --------------------------------------------------------
     # 6.6 — RETURN FORMATO JSON PARA EL ENDPOINT
