@@ -24,6 +24,34 @@ def planificar(
         consumo_extra_pct=consumo_extra_pct
     )
 
+    # ============================================================
+    # DEBUG DEFINITIVO – Localizar qué valor rompe JSON
+    # ============================================================
+    
+    import json
+    
+    print("\n🔍 DEBUG JSON – Analizando pedidos uno a uno...\n")
+    
+    for idx, ped in enumerate(resultado["pedidos"]):
+        try:
+            json.dumps(ped)
+        except Exception as e:
+            print("❌ ERROR EN JSON EN FILA:", idx)
+            print("Contenido completo del pedido problemático:")
+            print(ped)
+            print("\nAnalizando campos uno por uno:")
+            for k, v in ped.items():
+                try:
+                    json.dumps(v)
+                except Exception as e_field:
+                    print(f"   🔥 Campo problemático: {k}")
+                    print(f"      Valor: {repr(v)}")
+                    print(f"      Error: {e_field}")
+            raise   # ← Reventar el endpoint expresamente para ver el error en logs
+    
+    print("\n✅ DEBUG JSON – Ningún problema detectado en pedidos individuales")
+
+
     return {
         "status": "OK",
         "proveedor_id": proveedor_id,
