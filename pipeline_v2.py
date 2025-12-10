@@ -339,8 +339,10 @@ def ejecutar_pipeline_v2(proveedor_id: int, consumo_extra_pct: float):
         "CMD_Ajustado",
         "Dias_stock_llegada",
         "Precio_estandar_PMV",
-        "Valor_total"
+        "Valor_total",
+        "Comentarios" 
     ]
+
 
     
     # Convertimos a JSON para el endpoint
