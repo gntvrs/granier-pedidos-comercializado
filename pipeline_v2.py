@@ -343,43 +343,48 @@ def ejecutar_pipeline_v2(proveedor_id: int, consumo_extra_pct: float):
         "Comentarios" 
     ]
 
+    # --------------------------------------------------------
+    # 6.5 — LIMPIEZA FINAL ANTES DEL JSON
+    # --------------------------------------------------------
+    
     import numpy as np
     
-    print("\n================ DEBUG OUT_P VALUES ================")
+    # 1) Eliminar columnas basura que vienen de merges internos
+    cols_basura = [
+        "material_x",
+        "material_y",
+        "cajas_capa",
+        "cajas_pal",
+        "dias_stock_pal"
+    ]
+    out_p = out_p.drop(columns=[c for c in cols_basura if c in out_p.columns])
     
-    for col in out_p.columns:
-        try:
-            series = out_p[col]
+    # 2) Convertir NaN / <NA> a None → JSON-safe
+    out_p = out_p.replace({np.nan: None})
     
-            # Detectar INF, -INF y NaN
-            mask_inf = series == np.inf
-            mask_ninf = series == -np.inf
-            mask_nan = series.isna()
+    # 3) Forzar None en floats inválidos (por si queda algo raro)
+    for col in columnas_sheets:
+        if col in out_p.columns:
+            out_p[col] = out_p[col].apply(
+                lambda x: None if isinstance(x, float) and (np.isnan(x) or np.isinf(x)) else x
+            )
     
-            if mask_inf.any() or mask_ninf.any() or mask_nan.any():
-                print(f"⚠️ Problemas en columna '{col}'")
+    # 4) Debug opcional (puedes dejarlo o quitarlo)
+    print("\n=== FINAL CLEANED out_p BEFORE JSON ===")
+    print(out_p[columnas_sheets].head(10))
+    print("========================================\n")
     
-                # Mostrar primeras filas conflictivas
-                bad_idx = series[mask_inf | mask_ninf | mask_nan].index.tolist()
+    # --------------------------------------------------------
+    # 6.6 — RETURN FORMATO JSON PARA EL ENDPOINT
+    # --------------------------------------------------------
     
-                print("   Filas conflictivas:", bad_idx[:10])
-                print(out_p.loc[bad_idx[:5], [col, "Centro", "Material", "Fecha_Entrega", "Cantidad"]])
-    
-        except Exception as e:
-            print(f"Error revisando columna {col}: {str(e)}")
-    
-    print("================ FIN DEBUG OUT_P ================\n")
-    
-    # Convertimos a JSON para el endpoint
     pedidos_json = out_p[columnas_sheets].to_dict(orient="records")
     
-    # --------------------------------------------------------
-    # 6.5 — RETURN FINAL DEL ENDPOINT
-    # --------------------------------------------------------
     return {
         "proveedor": proveedor_id,
         "pedidos_rows": len(out_p),
         "forecast_rows": len(forecast_aux),
         "pedidos": pedidos_json
     }
-
+    
+    
