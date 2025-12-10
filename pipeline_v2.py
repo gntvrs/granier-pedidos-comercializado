@@ -369,14 +369,13 @@ def ejecutar_pipeline_v2(proveedor_id: int, consumo_extra_pct: float):
                 lambda x: None if isinstance(x, float) and (np.isnan(x) or np.isinf(x)) else x
             )
     
-    # 4) Debug opcional (puedes dejarlo o quitarlo)
-    print("\n=== FINAL CLEANED out_p BEFORE JSON ===")
-    print(out_p[columnas_sheets].head(10))
-    print("========================================\n")
-    
     # --------------------------------------------------------
     # 6.6 — RETURN FORMATO JSON PARA EL ENDPOINT
     # --------------------------------------------------------
+
+    mask_inf = np.isinf(out_p["Dias_stock_llegada"])
+    print("INF en Dias_stock_llegada:", out_p[mask_inf][["Centro","Material","Fecha_Entrega","Dias_stock_llegada","CMD_Ajustado"]].head())
+
     
     pedidos_json = out_p[columnas_sheets].to_dict(orient="records")
     
