@@ -84,10 +84,10 @@ def cargar_datos_reales(
     )
 
     # --------------------------------------------------------
-    # 2) Stock + CMD ajustado (desde v_ZLO12_curado)
+    # 2) Stock + CMD desde v_ZLO12_curado
     # --------------------------------------------------------
-    print("   → Cargando stock + CMD ajustado desde v_ZLO12_curado...")
-
+    print("   → Cargando stock + CMD desde v_ZLO12_curado...")
+    
     sql_sc = f"""
     WITH cm AS (
       SELECT * FROM UNNEST([
@@ -97,26 +97,37 @@ def cargar_datos_reales(
     SELECT
       z.Centro,
       z.Material,
-      z.CMD_Ajustado_Final AS Consumo_medio_diario,
       z.Stock,
+      z.CMD_SAP,
+      z.CMD_Ajustado_Final,
       z.cantidad_min_fabricacion
     FROM `{PROJECT_ID}.granier_logistica.v_ZLO12_curado` z
     JOIN cm USING (Centro, Material)
     """
-
+    
     df_sc = client.query(sql_sc).to_dataframe()
-
+    
     if df_sc.empty:
         raise ValueError("No hay datos en v_ZLO12_curado para los materiales detectados.")
-
-    # --------------------------------------------------------
-    # 3) Ajuste del consumo (CMD ajustado * (1 + % extra))
-    # --------------------------------------------------------
+    
+    # 3) Ajuste del consumo (CMD_Ajustado_Final * (1 + % extra))
     consumo_diario = {
         (row["Centro"], row["Material"]):
-            float(row["Consumo_medio_diario"]) * (1.0 + float(consumo_extra_pct))
+            float(row["CMD_Ajustado_Final"]) * (1.0 + float(consumo_extra_pct))
         for _, row in df_sc.iterrows()
     }
+    
+    # CMD “puro” SAP
+    cmd_sap = {
+        (row["Centro"], row["Material"]): float(row["CMD_SAP"])
+        for _, row in df_sc.iterrows()
+    }
+    
+    cantidad_min_fabricacion = {
+        row["Material"]: float(row["cantidad_min_fabricacion"])
+        for _, row in df_sc.iterrows()
+    }
+
 
     # --------------------------------------------------------
     # 4) Stock fábrica (centro 1004) también desde v_ZLO12_curado
@@ -244,21 +255,19 @@ def cargar_datos_reales(
     return {
         # Base para forecast y simulación
         "stock_inicial_centros": df_sc[["Centro", "Material", "Stock"]],
-        "consumo_diario": consumo_diario,
-        "cantidad_min_fabricacion": {
-            row["Material"]: float(row["cantidad_min_fabricacion"])
-            for _, row in df_sc.iterrows()
-        },
+        "consumo_diario": consumo_diario,      # = CMD_Ajustado (ya con % extra)
+        "cmd_sap": cmd_sap,                    # nuevo
         "stock_fabrica": stock_fabrica,
-
+        "cantidad_min_fabricacion": cantidad_min_fabricacion,
+    
         # Días objetivo / seguridad
         "dias_stock_objetivo": dias_stock_objetivo,
         "dias_stock_seguridad": dias_stock_seguridad,
-
+    
         # Parámetros de producción
         "puesto_trabajo": puesto_trabajo,
         "grupo_de_fabr": grupo_de_fabr,
-
+    
         # Novedades V2
         "minimos_logisticos": df_minimos,
         "rotacion": df_rotacion,
