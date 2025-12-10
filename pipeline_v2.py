@@ -343,7 +343,32 @@ def ejecutar_pipeline_v2(proveedor_id: int, consumo_extra_pct: float):
         "Comentarios" 
     ]
 
-
+    import numpy as np
+    
+    print("\n================ DEBUG OUT_P VALUES ================")
+    
+    for col in out_p.columns:
+        try:
+            series = out_p[col]
+    
+            # Detectar INF, -INF y NaN
+            mask_inf = series == np.inf
+            mask_ninf = series == -np.inf
+            mask_nan = series.isna()
+    
+            if mask_inf.any() or mask_ninf.any() or mask_nan.any():
+                print(f"⚠️ Problemas en columna '{col}'")
+    
+                # Mostrar primeras filas conflictivas
+                bad_idx = series[mask_inf | mask_ninf | mask_nan].index.tolist()
+    
+                print("   Filas conflictivas:", bad_idx[:10])
+                print(out_p.loc[bad_idx[:5], [col, "Centro", "Material", "Fecha_Entrega", "Cantidad"]])
+    
+        except Exception as e:
+            print(f"Error revisando columna {col}: {str(e)}")
+    
+    print("================ FIN DEBUG OUT_P ================\n")
     
     # Convertimos a JSON para el endpoint
     pedidos_json = out_p[columnas_sheets].to_dict(orient="records")
