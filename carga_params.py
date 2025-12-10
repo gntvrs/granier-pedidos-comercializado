@@ -248,7 +248,30 @@ def cargar_datos_reales(
     df_rotacion = client.query(sql_rotacion).to_dataframe()
 
     # --------------------------------------------------------
-    # 9) Devolver todo lo necesario para el pipeline V2
+    # 9) Precios estándar PMV por Centro–Material
+    # --------------------------------------------------------
+    print("   → Cargando Precio_estandar_PMV desde Master_Articulos_Centro...")
+    
+    sql_precio = f"""
+    SELECT 
+        CAST(Material AS INT64) AS Material,
+        CAST(Centro AS STRING) AS Centro,
+        Precio_estandar_PMV
+    FROM `{PROJECT_ID}.granier_maestros.Master_Articulos_Centro`
+    """
+    
+    df_precio = client.query(sql_precio).to_dataframe()
+    
+    # Diccionario: (Centro, Material) → precio
+    precio_pmv = {
+        (row["Centro"], row["Material"]): float(row["Precio_estandar_PMV"])
+        for _, row in df_precio.iterrows()
+        if row["Precio_estandar_PMV"] is not None
+    }
+
+
+    # --------------------------------------------------------
+    # 10) Devolver todo lo necesario para el pipeline V2
     # --------------------------------------------------------
     print("✅ Datos cargados correctamente (V2).")
 
@@ -271,4 +294,5 @@ def cargar_datos_reales(
         # Novedades V2
         "minimos_logisticos": df_minimos,
         "rotacion": df_rotacion,
+        "precio_pmv": precio_pmv,
     }
