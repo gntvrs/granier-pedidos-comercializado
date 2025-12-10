@@ -5,23 +5,19 @@
 from datetime import datetime, date, timedelta
 from google.cloud import bigquery
 import pandas as pd
-import math
+import numpy as np
 
 from carga_params import cargar_datos_reales
 from funciones_stg import (
     forecast_stock_centros,
     generar_pedidos_centros_desde_forecastV2,
     ajustar_pedidos_por_restricciones_logisticas_v2,
-    ajustar_pedidos_a_minimos_logisticos_v2
+    ajustar_pedidos_a_minimos_logisticos_v2,
 )
 
 PROJECT_ID = "business-intelligence-444511"
 DATASET    = "granier_logistica"
 
-
-# ============================================================
-#                      PIPELINE V2
-# ============================================================
 
 def ejecutar_pipeline_v2(proveedor_id: int, consumo_extra_pct: float):
 
@@ -44,13 +40,12 @@ def ejecutar_pipeline_v2(proveedor_id: int, consumo_extra_pct: float):
     dias_seg        = datos["dias_stock_seguridad"]
     cantidad_min_fabricacion = datos["cantidad_min_fabricacion"]
     df_minimos      = datos["minimos_logisticos"]
-    df_rotacion     = datos["rotacion"]     # vista CAP/PAL
-    cmd_sap_dict    = datos["cmd_sap"]             # nuevo
-    precio_pmv = datos["precio_pmv"]
+    df_rotacion     = datos["rotacion"]
+    cmd_sap_dict    = datos["cmd_sap"]
+    precio_pmv      = datos["precio_pmv"]
 
     print(f"✔ Centros-material: {len(stock_centros)}")
     print(f"✔ Registros rotación CAP/PAL: {len(df_rotacion)}")
-
 
     # ========================================================
     # 2) CARGA DE ARTÍCULOS (para enriquecer pedidos)
@@ -66,7 +61,6 @@ def ejecutar_pipeline_v2(proveedor_id: int, consumo_extra_pct: float):
 
     df_art = client.query(sql_art).to_dataframe()
     df_art["Material"] = pd.to_numeric(df_art["Material"], errors="coerce").astype("Int64")
-
 
     # ========================================================
     # 3) LOOP ITERATIVO – Forecast → Pedidos → Ajustes
@@ -99,7 +93,6 @@ def ejecutar_pipeline_v2(proveedor_id: int, consumo_extra_pct: float):
 
         print(f"   → Roturas detectadas: {len(roturas)}")
 
-        # 3.1) Generar nuevos pedidos para estas roturas
         nuevos = generar_pedidos_centros_desde_forecastV2(
             forecast_df=forecast,
             consumo_diario=consumo_diario,
@@ -113,9 +106,7 @@ def ejecutar_pipeline_v2(proveedor_id: int, consumo_extra_pct: float):
 
         print("   → Nuevos pedidos generados")
 
-        # ======================================================
-        # 3.2) AJUSTE LOGÍSTICO V2 – RESTRICCIÓN SEMANAL
-        # ======================================================
+        # 3.2) Restricción logística (adelantos)
         nuevos = ajustar_pedidos_por_restricciones_logisticas_v2(
             pedidos_df=nuevos,
             dia_corte=2,
@@ -123,48 +114,40 @@ def ejecutar_pipeline_v2(proveedor_id: int, consumo_extra_pct: float):
             dias_stock_objetivo=dias_obj
         )
 
-        # ======================================================
-        # 3.3) AJUSTE CAP / PALET SEGÚN ROTACIÓN
-        # ======================================================
+        # 3.3) CAP / PALET (solo comentamos PALET)
         nuevos = ajustar_pedidos_a_minimos_logisticos_v2(
             nuevos,
             df_minimos=df_minimos,
             df_rotacion=df_rotacion
         )
 
-        # Aplicamos la cantidad ajustada final
         if "Cantidad_ajustada" in nuevos.columns:
             nuevos["Cantidad"] = nuevos["Cantidad_ajustada"]
             nuevos.drop(columns=["Cantidad_ajustada"], inplace=True)
 
-        # Añadir al histórico de pedidos
         pedidos_total = pd.concat([pedidos_total, nuevos], ignore_index=True)
-
-        # Añadir al calendario real de entregas
         entregas_totales = pd.concat(
-            [entregas_totales, nuevos[["Centro","Material","Fecha_Entrega","Cantidad"]]],
+            [entregas_totales, nuevos[["Centro", "Material", "Fecha_Entrega", "Cantidad"]]],
             ignore_index=True
         )
 
-
     # ========================================================
-    # 4) FORECAST FINAL (una vez todas las entregas están fijadas)
+    # 4) FORECAST FINAL
     # ========================================================
     forecast_final = forecast_stock_centros(
         stock_inicial=stock_centros,
         consumo_diario=consumo_diario,
-        entregas_planificadas=pedidos_total[["Centro","Material","Fecha_Entrega","Cantidad"]],
+        entregas_planificadas=pedidos_total[["Centro", "Material", "Fecha_Entrega", "Cantidad"]],
         dias_forecast=60,
         clamp_cero=True
     )
 
-
     # ========================================================
-    # 5) PERSISTENCIA EN BIGQUERY
+    # 5) PERSISTENCIA EN BIGQUERY (FORECAST + PEDIDOS RAW)
     # ========================================================
     print("\n💾 Guardando resultados en BigQuery...")
 
-    # ---- FORECAST ----
+    # FORECAST
     out_f = forecast_final.copy()
     out_f["Fecha_ejecucion"] = pd.Timestamp.now(tz="Europe/Madrid")
     out_f["Material"] = pd.to_numeric(out_f["Material"], errors="coerce").astype("Int64")
@@ -176,163 +159,117 @@ def ejecutar_pipeline_v2(proveedor_id: int, consumo_extra_pct: float):
         job_config=bigquery.LoadJobConfig(write_disposition="WRITE_TRUNCATE")
     ).result()
 
-
-    # ---- PEDIDOS ----
+    # PEDIDOS RAW → tabla BQ simple
     if not pedidos_total.empty:
+        out_p_bq = pedidos_total.copy()
+        out_p_bq["Fecha_ejecucion"] = pd.Timestamp.now(tz="Europe/Madrid")
 
-        out_p = pedidos_total.copy()
-        out_p["Fecha_ejecucion"] = pd.Timestamp.now(tz="Europe/Madrid")
+        iso_bq = pd.to_datetime(out_p_bq["Fecha_Entrega"]).dt.isocalendar()
+        out_p_bq["Ano"] = iso_bq["year"].astype(int)
+        out_p_bq["Semana_Num"] = iso_bq["week"].astype(int)
+        out_p_bq["Semana_ISO"] = (
+            out_p_bq["Ano"].astype(str) + "-W" + out_p_bq["Semana_Num"].astype(str).str.zfill(2)
+        )
 
-        iso = pd.to_datetime(out_p["Fecha_Entrega"]).dt.isocalendar()
-        out_p["Ano"] = iso["year"].astype(int)
-        out_p["Semana_Num"] = iso["week"].astype(int)
-        out_p["Semana_ISO"] = out_p["Ano"].astype(str) + "-W" + out_p["Semana_Num"].astype(str).str.zfill(2)
-
-        out_p["Material"] = pd.to_numeric(out_p["Material"], errors="coerce").astype("Int64")
-        out_p = out_p.merge(df_art, on="Material", how="left")
+        out_p_bq["Material"] = pd.to_numeric(out_p_bq["Material"], errors="coerce").astype("Int64")
+        out_p_bq = out_p_bq.merge(df_art, on="Material", how="left")
 
         client.load_table_from_dataframe(
-            out_p,
+            out_p_bq,
             f"{PROJECT_ID}.{DATASET}.Tbl_Pedidos_Simples_Proveedor{proveedor_id}_V2",
             job_config=bigquery.LoadJobConfig(write_disposition="WRITE_TRUNCATE")
         ).result()
-
     else:
-        out_p = pd.DataFrame(columns=pedidos_total.columns)
-
-    print(">>> OUT_P SHAPE:", out_p.shape)
-    print(">>> OUT_P COLUMNS:", out_p.columns.tolist())
-    print(out_p.head(5))
-
-
+        out_p_bq = pd.DataFrame(columns=pedidos_total.columns)
 
     # ========================================================
     # 6) FORMATO JSON PARA endpoint /planificar_v2
     # ========================================================
-    
     print("📤 Preparando JSON de salida...")
-    
-    # --------------------------------------------------------
-    # 6.1 — Normalizar forecast para acceder al stock proyectado
-    # --------------------------------------------------------
+
+    # 6.1 – Normalizar forecast para lookup de stock de llegada
     forecast_aux = forecast_final.copy()
     forecast_aux["Fecha"] = pd.to_datetime(forecast_aux["Fecha"]).dt.date
-    
-    # Ajusta aquí el nombre de la columna donde esté el stock proyectado en el forecast
     col_stock_forecast = "Stock_estimado"
-    
-    # Construimos una KEY para buscar stock en una fecha exacta
+
     forecast_aux["key"] = list(zip(
         forecast_aux["Centro"],
         forecast_aux["Material"],
         forecast_aux["Fecha"]
     ))
-    
+
     stock_llegada_dict = {
-        k: float(stock_value)
-        for k, stock_value in zip(forecast_aux["key"], forecast_aux[col_stock_forecast])
+        k: float(v)
+        for k, v in zip(forecast_aux["key"], forecast_aux[col_stock_forecast])
     }
-    
-    # --------------------------------------------------------
-    # 6.2 — Enriquecer pedidos_total → out_p
-    # --------------------------------------------------------
+
+    # 6.2 – Construir out_p enriquecido SOLO para front / JSON
     if not pedidos_total.empty:
-    
         out_p = pedidos_total.copy()
         out_p["Fecha_ejecucion"] = pd.Timestamp.now(tz="Europe/Madrid")
-    
-        # Semana ISO
+
         iso = pd.to_datetime(out_p["Fecha_Entrega"]).dt.isocalendar()
         out_p["Ano"] = iso["year"].astype(int)
         out_p["Semana_Num"] = iso["week"].astype(int)
         out_p["Semana_ISO"] = (
-            out_p["Ano"].astype(str)
-            + "-W"
-            + out_p["Semana_Num"].astype(str).str.zfill(2)
+            out_p["Ano"].astype(str) + "-W" + out_p["Semana_Num"].astype(str).str.zfill(2)
         )
-    
-        # Limpieza tipo
+
         out_p["Fecha_Entrega"] = pd.to_datetime(out_p["Fecha_Entrega"]).dt.date
         out_p["Material"] = pd.to_numeric(out_p["Material"], errors="coerce").astype("Int64")
-    
-        # Añadir información de SAP
+
         out_p = out_p.merge(df_art, on="Material", how="left")
-    
-        # --------------------------------------------------------
-        # CMD_Sap y CMD_Ajustado (consumo_diario)
-        # --------------------------------------------------------
+
+        # CMD_Sap y CMD_Ajustado
         def _cmd_sap(row):
             return cmd_sap_dict.get((row["Centro"], row["Material"]), None)
-    
+
         def _cmd_ajustado(row):
             return consumo_diario.get((row["Centro"], row["Material"]), None)
-    
+
         out_p["CMD_Sap"] = out_p.apply(_cmd_sap, axis=1)
         out_p["CMD_Ajustado"] = out_p.apply(_cmd_ajustado, axis=1)
 
-        # --------------------------------------------------------
-        # Precio estándar PMV (según Material y Centro)
-        # --------------------------------------------------------
+        # Precio estándar PMV
         def _precio_pmv(row):
             return precio_pmv.get((row["Centro"], row["Material"]), None)
-        
+
         out_p["Precio_estandar_PMV"] = out_p.apply(_precio_pmv, axis=1)
 
-        # === DEBUG PMV ===
-        mask_inf_pmv = out_p["Precio_estandar_PMV"].apply(lambda x: isinstance(x, float) and np.isinf(x))
-        print("PMV infinito encontrado en filas:", out_p.index[mask_inf_pmv].tolist()[:20])
-        
-        if mask_inf_pmv.any():
-            print(out_p.loc[mask_inf_pmv, ["Centro","Material","Precio_estandar_PMV","Cantidad","Valor_total"]].head())
-
-
+        # Valor total
         def _valor(row):
             precio = row["Precio_estandar_PMV"]
             cantidad = row["Cantidad"]
             if precio is None or cantidad is None:
                 return None
-            return precio * cantidad
-        
+            return float(precio) * float(cantidad)
+
         out_p["Valor_total"] = out_p.apply(_valor, axis=1)
 
-        
-
-    
-        # --------------------------------------------------------
-        # 6.3 — Días de stock el día de llegada
-        # --------------------------------------------------------
+        # Días de stock en la llegada
         def _dias_stock_llegada(row):
             key = (row["Centro"], row["Material"], row["Fecha_Entrega"])
             stock_llegada = stock_llegada_dict.get(key, None)
             cmd_adj = row["CMD_Ajustado"]
-    
+
             if stock_llegada is None or cmd_adj in (None, 0):
                 return None
-    
-            return stock_llegada / cmd_adj
-    
+            return float(stock_llegada) / float(cmd_adj)
+
         out_p["Dias_stock_llegada"] = out_p.apply(_dias_stock_llegada, axis=1)
-    
+
     else:
         out_p = pd.DataFrame(columns=pedidos_total.columns)
-    
-    
-    # --------------------------------------------------------
-    # 6.4 — Selección de columnas finales para Sheets / Front
-    # --------------------------------------------------------
 
-    # ========================================================
-    # ORDEN FINAL del resultado (Año / Semana / Centro / Codigo_Base)
-    # ========================================================
-    # Asegurar que Ano y Semana_Num existen y son numéricos
-    out_p["Ano"] = pd.to_numeric(out_p["Ano"], errors="coerce")
-    out_p["Semana_Num"] = pd.to_numeric(out_p["Semana_Num"], errors="coerce")
-    
-    # Ordenar por año ascendente, semana ascendente, centro y código base
-    out_p = out_p.sort_values(
-        by=["Ano", "Semana_Num", "Centro", "Codigo_Base"],
-        ascending=[True, True, True, True]
-    ).reset_index(drop=True)
+    # 6.3 – Orden final Año / Semana / Centro / Codigo_Base
+    if not out_p.empty:
+        out_p["Ano"] = pd.to_numeric(out_p["Ano"], errors="coerce")
+        out_p["Semana_Num"] = pd.to_numeric(out_p["Semana_Num"], errors="coerce")
+
+        out_p = out_p.sort_values(
+            by=["Ano", "Semana_Num", "Centro", "Codigo_Base"],
+            ascending=[True, True, True, True]
+        ).reset_index(drop=True)
 
     columnas_sheets = [
         "Ano",
@@ -350,47 +287,42 @@ def ejecutar_pipeline_v2(proveedor_id: int, consumo_extra_pct: float):
         "Dias_stock_llegada",
         "Precio_estandar_PMV",
         "Valor_total",
-        "Comentarios" 
+        "Comentarios",
     ]
 
-    # --------------------------------------------------------
-    # 6.5 — LIMPIEZA FINAL ANTES DEL JSON
-    # --------------------------------------------------------
-    
-    import numpy as np
-    
-    # 1) Eliminar columnas basura que vienen de merges internos
+    # 6.5 – Limpieza global antes del JSON
+    # Quitar columnas auxiliares si quedaran
     cols_basura = [
         "material_x",
         "material_y",
         "cajas_capa",
         "cajas_pal",
-        "dias_stock_pal"
+        "dias_stock_pal",
     ]
     out_p = out_p.drop(columns=[c for c in cols_basura if c in out_p.columns])
-    
-    # 2) Convertir NaN / <NA> a None → JSON-safe
-    out_p = out_p.replace({np.nan: None})
-    
-    # 3) Forzar None en floats inválidos (por si queda algo raro)
+
+    # Sustituir NaN / ±inf → None
+    out_p = out_p.replace({np.nan: None, np.inf: None, -np.inf: None})
+
     for col in columnas_sheets:
         if col in out_p.columns:
             out_p[col] = out_p[col].apply(
-                lambda x: None if isinstance(x, float) and (np.isnan(x) or np.isinf(x)) else x
+                lambda x: None
+                if isinstance(x, float) and (np.isnan(x) if x is not None else False)
+                else x
             )
-    
-    # --------------------------------------------------------
-    # 6.6 — RETURN FORMATO JSON PARA EL ENDPOINT
-    # --------------------------------------------------------
 
-   
-    pedidos_json = out_p[columnas_sheets].to_dict(orient="records")
-    
+    # 6.6 – Conversión a dict para el endpoint
+    if not out_p.empty:
+        pedidos_json = out_p[columnas_sheets].to_dict(orient="records")
+    else:
+        pedidos_json = []
+
     return {
         "proveedor": proveedor_id,
         "pedidos_rows": len(out_p),
         "forecast_rows": len(forecast_aux),
-        "pedidos": pedidos_json
+        "pedidos": pedidos_json,
     }
-    
+
     
