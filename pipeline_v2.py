@@ -311,18 +311,21 @@ def ejecutar_pipeline_v2(proveedor_id: int, consumo_extra_pct: float):
                 if isinstance(x, float) and (np.isnan(x) if x is not None else False)
                 else x
             )
-
-    # 6.6 – Conversión a dict para el endpoint
-    if not out_p.empty:
-        pedidos_json = out_p[columnas_sheets].to_dict(orient="records")
-    else:
-        pedidos_json = []
-
+    # --------------------------------------------------------
+    # 6.6 — RETURN FORMATO JSON PARA EL ENDPOINT
+    # --------------------------------------------------------
+    
+    # Eliminar completamente cualquier DataFrame del return
+    forecast_len = int(len(forecast_final))
+    
+    pedidos_json = out_p[columnas_sheets].to_dict(orient="records")
+    
     return {
         "proveedor": proveedor_id,
         "pedidos_rows": len(out_p),
-        "forecast_rows": len(forecast_aux),
-        "pedidos": pedidos_json,
+        "forecast_rows": forecast_len,
+        "pedidos": pedidos_json
     }
+
 
     
