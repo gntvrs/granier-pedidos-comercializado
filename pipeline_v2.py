@@ -214,7 +214,7 @@ def ejecutar_pipeline_v2(proveedor_id: int, consumo_extra_pct: float):
     forecast_aux["Fecha"] = pd.to_datetime(forecast_aux["Fecha"]).dt.date
     
     # Ajusta aquí el nombre de la columna donde esté el stock proyectado en el forecast
-    col_stock_forecast = "Stock"   # ⚠️ Cambiar si tu forecast usa otro nombre
+    col_stock_forecast = "Stock_estimado"
     
     # Construimos una KEY para buscar stock en una fecha exacta
     forecast_aux["key"] = list(zip(
