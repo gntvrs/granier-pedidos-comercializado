@@ -45,6 +45,7 @@ def ejecutar_pipeline_v2(proveedor_id: int, consumo_extra_pct: float):
     cantidad_min_fabricacion = datos["cantidad_min_fabricacion"]
     df_minimos      = datos["minimos_logisticos"]
     df_rotacion     = datos["rotacion"]     # vista CAP/PAL
+    cmd_sap_dict    = datos["cmd_sap"]             # nuevo
 
 
     print(f"✔ Centros-material: {len(stock_centros)}")
@@ -203,6 +204,89 @@ def ejecutar_pipeline_v2(proveedor_id: int, consumo_extra_pct: float):
     # ========================================================
     # 6) FORMATO JSON PARA endpoint /planificar_v2
     # ========================================================
+    
+    print("📤 Preparando JSON de salida...")
+    
+    # --------------------------------------------------------
+    # 6.1 — Normalizar forecast para acceder al stock proyectado
+    # --------------------------------------------------------
+    forecast_aux = forecast_final.copy()
+    forecast_aux["Fecha"] = pd.to_datetime(forecast_aux["Fecha"]).dt.date
+    
+    # Ajusta aquí el nombre de la columna donde esté el stock proyectado en el forecast
+    col_stock_forecast = "Stock"   # ⚠️ Cambiar si tu forecast usa otro nombre
+    
+    # Construimos una KEY para buscar stock en una fecha exacta
+    forecast_aux["key"] = list(zip(
+        forecast_aux["Centro"],
+        forecast_aux["Material"],
+        forecast_aux["Fecha"]
+    ))
+    
+    stock_llegada_dict = {
+        k: float(stock_value)
+        for k, stock_value in zip(forecast_aux["key"], forecast_aux[col_stock_forecast])
+    }
+    
+    # --------------------------------------------------------
+    # 6.2 — Enriquecer pedidos_total → out_p
+    # --------------------------------------------------------
+    if not pedidos_total.empty:
+    
+        out_p = pedidos_total.copy()
+        out_p["Fecha_ejecucion"] = pd.Timestamp.now(tz="Europe/Madrid")
+    
+        # Semana ISO
+        iso = pd.to_datetime(out_p["Fecha_Entrega"]).dt.isocalendar()
+        out_p["Ano"] = iso["year"].astype(int)
+        out_p["Semana_Num"] = iso["week"].astype(int)
+        out_p["Semana_ISO"] = (
+            out_p["Ano"].astype(str)
+            + "-W"
+            + out_p["Semana_Num"].astype(str).str.zfill(2)
+        )
+    
+        # Limpieza tipo
+        out_p["Fecha_Entrega"] = pd.to_datetime(out_p["Fecha_Entrega"]).dt.date
+        out_p["Material"] = pd.to_numeric(out_p["Material"], errors="coerce").astype("Int64")
+    
+        # Añadir información de SAP
+        out_p = out_p.merge(df_art, on="Material", how="left")
+    
+        # --------------------------------------------------------
+        # CMD_Sap y CMD_Ajustado (consumo_diario)
+        # --------------------------------------------------------
+        def _cmd_sap(row):
+            return cmd_sap_dict.get((row["Centro"], row["Material"]), None)
+    
+        def _cmd_ajustado(row):
+            return consumo_diario.get((row["Centro"], row["Material"]), None)
+    
+        out_p["CMD_Sap"] = out_p.apply(_cmd_sap, axis=1)
+        out_p["CMD_Ajustado"] = out_p.apply(_cmd_ajustado, axis=1)
+    
+        # --------------------------------------------------------
+        # 6.3 — Días de stock el día de llegada
+        # --------------------------------------------------------
+        def _dias_stock_llegada(row):
+            key = (row["Centro"], row["Material"], row["Fecha_Entrega"])
+            stock_llegada = stock_llegada_dict.get(key, None)
+            cmd_adj = row["CMD_Ajustado"]
+    
+            if stock_llegada is None or cmd_adj in (None, 0):
+                return None
+    
+            return stock_llegada / cmd_adj
+    
+        out_p["Dias_stock_llegada"] = out_p.apply(_dias_stock_llegada, axis=1)
+    
+    else:
+        out_p = pd.DataFrame(columns=pedidos_total.columns)
+    
+    
+    # --------------------------------------------------------
+    # 6.4 — Selección de columnas finales para Sheets / Front
+    # --------------------------------------------------------
     columnas_sheets = [
         "Ano",
         "Semana_Num",
@@ -213,14 +297,22 @@ def ejecutar_pipeline_v2(proveedor_id: int, consumo_extra_pct: float):
         "N_antiguo_material",
         "Fecha_Rotura",
         "Fecha_Entrega",
-        "Cantidad"
+        "Cantidad",
+        "CMD_Sap",
+        "CMD_Ajustado",
+        "Dias_stock_llegada"
     ]
-
+    
+    # Convertimos a JSON para el endpoint
     pedidos_json = out_p[columnas_sheets].to_dict(orient="records")
-
+    
+    # --------------------------------------------------------
+    # 6.5 — RETURN FINAL DEL ENDPOINT
+    # --------------------------------------------------------
     return {
         "proveedor": proveedor_id,
         "pedidos_rows": len(out_p),
-        "forecast_rows": len(out_f),
+        "forecast_rows": len(forecast_aux),
         "pedidos": pedidos_json
     }
+
