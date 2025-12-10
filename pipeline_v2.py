@@ -200,6 +200,11 @@ def ejecutar_pipeline_v2(proveedor_id: int, consumo_extra_pct: float):
     else:
         out_p = pd.DataFrame(columns=pedidos_total.columns)
 
+    print(">>> OUT_P SHAPE:", out_p.shape)
+    print(">>> OUT_P COLUMNS:", out_p.columns.tolist())
+    print(out_p.head(5))
+
+
 
     # ========================================================
     # 6) FORMATO JSON PARA endpoint /planificar_v2
