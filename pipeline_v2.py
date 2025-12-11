@@ -263,7 +263,7 @@ def ejecutar_pipeline_v2(proveedor_id: int, consumo_extra_pct: float):
         # =============================
         client.load_table_from_dataframe(
             out_p,
-            f"{PROJECT_ID}.{DATASET}.Tbl_Pedidos_Simples_Proveedor{proveedor_id}_V2",
+            f"{PROJECT_ID}.{DATASET}.Tbl_Pedidos_Simples_V2",
             job_config=bigquery.LoadJobConfig(write_disposition="WRITE_TRUNCATE")
         ).result()
 
