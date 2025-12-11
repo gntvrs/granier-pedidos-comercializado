@@ -160,6 +160,32 @@ def ejecutar_pipeline_v2(proveedor_id: int, consumo_extra_pct: float):
 
 
     # ========================================================
+    # 5.0) PRE-CÁLCULO NECESARIO PARA ENRIQUECIMIENTO
+    # stock_llegada_dict debe existir ANTES de la persistencia
+    # ========================================================
+
+    forecast_aux = forecast_final.copy()
+    forecast_aux["Fecha"] = pd.to_datetime(forecast_aux["Fecha"]).dt.date
+
+    col_stock_forecast = "Stock_estimado"
+
+    # Construir llave para stock llegado
+    forecast_aux["key"] = list(zip(
+        forecast_aux["Centro"],
+        forecast_aux["Material"],
+        forecast_aux["Fecha"]
+    ))
+
+    stock_llegada_dict = {
+        k: float(stock_value)
+        for k, stock_value in zip(
+            forecast_aux["key"],
+            forecast_aux[col_stock_forecast]
+        )
+    }
+
+    
+    # ========================================================
     # 5) PERSISTENCIA EN BIGQUERY
     # ========================================================
     print("\n💾 Guardando resultados en BigQuery...")
@@ -255,27 +281,7 @@ def ejecutar_pipeline_v2(proveedor_id: int, consumo_extra_pct: float):
     print("📤 Preparando JSON de salida...")
 
     # --------------------------------------------------------
-    # 6.1 Normalizar forecast para stock en fecha exacta
-    # --------------------------------------------------------
-    forecast_aux = forecast_final.copy()
-    forecast_aux["Fecha"] = pd.to_datetime(forecast_aux["Fecha"]).dt.date
-
-    col_stock_forecast = "Stock_estimado"
-
-    forecast_aux["key"] = list(zip(
-        forecast_aux["Centro"],
-        forecast_aux["Material"],
-        forecast_aux["Fecha"]
-    ))
-
-    stock_llegada_dict = {
-        k: float(stock_value)
-        for k, stock_value in zip(forecast_aux["key"], forecast_aux[col_stock_forecast])
-    }
-
-    # --------------------------------------------------------
-    # 6.2 Formato final para JSON
-    #       (NO recalculamos nada → solo formateamos)
+    # 6.1 Formato final para JSON
     # --------------------------------------------------------
     out_p_json = out_p.copy()
 
@@ -308,7 +314,7 @@ def ejecutar_pipeline_v2(proveedor_id: int, consumo_extra_pct: float):
     pedidos_json = out_p_json[columnas_sheets].to_dict(orient="records")
 
     # --------------------------------------------------------
-    # 6.5 RETURN FINAL DEL ENDPOINT
+    # 6.2 RETURN FINAL DEL ENDPOINT
     # --------------------------------------------------------
     return {
         "proveedor": proveedor_id,
