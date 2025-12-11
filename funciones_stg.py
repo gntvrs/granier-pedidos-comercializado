@@ -765,7 +765,7 @@ def ajustar_pedidos_por_restricciones_logisticas_v2(
         final_row["Cantidad"]      = nueva_cantidad
         # Mantener comentarios previos si existieran
         prev = final_row.get("Comentarios", "")
-        nuevo = "📦 Adelantado por restricción logística (V2)"
+        nuevo = ""
 
         if prev:
             final_row["Comentarios"] = prev + " • " + nuevo
@@ -851,6 +851,7 @@ def ajustar_pedidos_a_minimos_logisticos_v2(
     merged = merged.loc[:, ~merged.columns.duplicated()]
 
     return merged
+
 
 
 
