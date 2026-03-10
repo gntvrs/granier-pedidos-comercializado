@@ -66,7 +66,8 @@ def planificar(
 @app.get("/planificar_v2")
 def planificar_v2(
     proveedor_id: int,
-    consumo_extra_pct: float = 0.0
+    consumo_extra_pct: float = 0.0,
+    centro: str | None = None
 ):
     """
     Versión experimental del pipeline (V2).
@@ -75,13 +76,15 @@ def planificar_v2(
 
     resultado = ejecutar_pipeline_v2(
         proveedor_id=proveedor_id,
-        consumo_extra_pct=consumo_extra_pct
+        consumo_extra_pct=consumo_extra_pct,
+        centro=centro
     )
 
     return {
         "status": "OK_V2",
         "proveedor_id": proveedor_id,
         "consumo_extra_pct": consumo_extra_pct,
+        "centro": centro,
         "resultado": resultado
     }
 
