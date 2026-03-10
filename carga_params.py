@@ -342,14 +342,15 @@ def cargar_datos_reales(
     return {
         # Base para forecast y simulación
         "stock_inicial_centros": df_sc[["Centro", "Material", "Stock", "Stock_Actual"]],
-        "consumo_diario": consumo_diario,      # = CMD_Ajustado (ya con % extra)
-        "cmd_sap": cmd_sap,                    # nuevo
+        "consumo_diario": consumo_diario,
+        "cmd_sap": cmd_sap,
         "stock_fabrica": stock_fabrica,
         "cantidad_min_fabricacion": cantidad_min_fabricacion,
     
         # Días objetivo / seguridad
         "dias_stock_objetivo": dias_stock_objetivo,
         "dias_stock_seguridad": dias_stock_seguridad,
+        "dias_seg_por_centro": dias_seg_por_centro,
     
         # Parámetros de producción
         "puesto_trabajo": puesto_trabajo,
