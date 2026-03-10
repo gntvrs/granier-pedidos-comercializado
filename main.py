@@ -67,7 +67,8 @@ def planificar(
 def planificar_v2(
     proveedor_id: int,
     consumo_extra_pct: float = 0.0,
-    centro: str | None = None
+    centro: str | None = None,
+    fecha_corte: str | None = None
 ):
     """
     Versión experimental del pipeline (V2).
@@ -77,7 +78,8 @@ def planificar_v2(
     resultado = ejecutar_pipeline_v2(
         proveedor_id=proveedor_id,
         consumo_extra_pct=consumo_extra_pct,
-        centro=centro
+        centro=centro,
+        fecha_corte=fecha_corte
     )
 
     return {
@@ -85,9 +87,9 @@ def planificar_v2(
         "proveedor_id": proveedor_id,
         "consumo_extra_pct": consumo_extra_pct,
         "centro": centro,
+        "fecha_corte": fecha_corte,
         "resultado": resultado
     }
-
 
 # -------------------------------------------------------------
 # 2) ENDPOINT DE ROTURAS TOTALES PARA REVISIÓN MANUAL
