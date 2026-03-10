@@ -23,7 +23,14 @@ DATASET    = "granier_logistica"
 #                      PIPELINE V2
 # ============================================================
 
-def ejecutar_pipeline_v2(proveedor_id: int, consumo_extra_pct: float):
+def ejecutar_pipeline_v2(
+    proveedor_id: int,
+    consumo_extra_pct: float,
+    dias_stock: int,
+    fecha_corte: str,
+    centro: str,
+    dias_forecast: int = 60
+):
 
     print("🚀 Ejecutando PIPELINE V2...")
     client = bigquery.Client()
