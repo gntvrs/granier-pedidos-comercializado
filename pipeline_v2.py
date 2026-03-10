@@ -229,6 +229,21 @@ def ejecutar_pipeline_v2(proveedor_id: int, consumo_extra_pct: float):
         # Info SAP
         out_p = out_p.merge(df_art, on="Material", how="left")
 
+        # Stock inicial del centro-material (desde carga_params)
+        df_stock_info = stock_centros[["Centro", "Material", "Stock", "Stock_Actual"]].copy()
+        df_stock_info["Material"] = pd.to_numeric(df_stock_info["Material"], errors="coerce").astype("Int64")
+
+        out_p = out_p.merge(
+            df_stock_info,
+            on=["Centro", "Material"],
+            how="left"
+        )
+
+        # =============================
+        # 5.2 Enriquecimiento FINAL para BigQuery
+        #    (CMD_Sap, CMD_Ajustado, Dias_stock_llegada, Stock, Stock_Actual)
+        # =============================
+
         # =============================
         # 5.2 Enriquecimiento FINAL para BigQuery
         #    (CMD_Sap, CMD_Ajustado, Dias_stock_llegada)
@@ -306,6 +321,8 @@ def ejecutar_pipeline_v2(proveedor_id: int, consumo_extra_pct: float):
         "Fecha_Rotura",
         "Fecha_Entrega",
         "Cantidad",
+        "Stock",
+        "Stock_Actual",
         "CMD_Sap",
         "CMD_Ajustado",
         "Dias_stock_llegada"
