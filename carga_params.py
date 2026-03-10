@@ -2,12 +2,25 @@ from google.cloud import bigquery
 
 PROJECT_ID = "business-intelligence-444511"
 
-def generar_filtro_cm(client, proveedor_id: int):
+def generar_filtro_cm(client, proveedor_id: int, centro: str | None = None):
     """
     Devuelve un DataFrame con todas las parejas Centro–Material
-    activas hoy, excluyendo las referencias marcadas en
-    granier_logistica.Tbl_excluidos_flujo_comercializado
+    activas hoy para un proveedor.
+
+    Si se informa `centro`, filtra solo ese centro.
+    Si `centro` viene vacío o None, usa el conjunto completo
+    de centros del flujo.
     """
+
+    centros_default = ["0801", "2801", "2901", "4601", "1009"]
+
+    # Construimos la condición SQL de centro dinámicamente
+    if centro is not None and str(centro).strip() != "":
+        centro = str(centro).strip()
+        filtro_centros_sql = f"= '{centro}'"
+    else:
+        centros_sql = ",".join([f"'{c}'" for c in centros_default])
+        filtro_centros_sql = f"IN ({centros_sql})"
 
     sql = f"""
     WITH
@@ -23,7 +36,7 @@ def generar_filtro_cm(client, proveedor_id: int):
         CAST(Centro AS STRING)  AS Centro
       FROM `{PROJECT_ID}.granier_staging.stg_ME2L`
       WHERE Proveedor = {proveedor_id}
-        AND Centro IN ('0801','2801','2901','4601','1009')
+        AND Centro {filtro_centros_sql}
         AND Material IS NOT NULL
         AND Material != 30226
     ),
@@ -33,7 +46,7 @@ def generar_filtro_cm(client, proveedor_id: int):
         CAST(Centro AS STRING)  AS Centro
       FROM `{PROJECT_ID}.granier_logistica.Tbl_Pedidos_Pendientes`
       WHERE Proveedor = {proveedor_id}
-        AND Centro IN ('0801','2801','2901','4601','1009')
+        AND Centro {filtro_centros_sql}
         AND Material IS NOT NULL
         AND Material != 30226
     ),
@@ -48,7 +61,7 @@ def generar_filtro_cm(client, proveedor_id: int):
         CAST(Material AS INT64) AS Material
       FROM `{PROJECT_ID}.granier_staging.stg_ZLO12`
       WHERE Fecha = CURRENT_DATE()
-        AND Centro IN ('0801','2801','2901','4601','1009')
+        AND Centro {filtro_centros_sql}
         AND Material != 30226
     )
     SELECT DISTINCT
@@ -57,7 +70,7 @@ def generar_filtro_cm(client, proveedor_id: int):
     FROM union_all u
     JOIN zlo z USING (Centro, Material)
     LEFT JOIN excluidos e USING (Centro, Material)
-    WHERE e.Material IS NULL   -- ⬅️ EXCLUIR REFERENCIAS
+    WHERE e.Material IS NULL
     """
 
     return client.query(sql).to_dataframe()
