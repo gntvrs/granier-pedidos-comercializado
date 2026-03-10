@@ -89,11 +89,11 @@ def cargar_datos_reales(
     )
 
     # --------------------------------------------------------
-    # 2) Stock + CMD desde v_ZLO12_curado
+    # 2) Stock desde ZLO12_STREAMING_CURRENT
     # --------------------------------------------------------
-    print("   → Cargando stock + CMD desde v_ZLO12_curado...")
-    
-    sql_sc = f"""
+    print("   → Cargando stock actual desde ZLO12_STREAMING_CURRENT...")
+
+    sql_stock = f"""
     WITH cm AS (
       SELECT * FROM UNNEST([
         {cm_structs}
@@ -102,32 +102,77 @@ def cargar_datos_reales(
     SELECT
       z.Centro,
       z.Material,
-      z.Stock,
+      SAFE_CAST(z.Libre_util_centro AS FLOAT64) AS Stock_Actual,
+      SAFE_CAST(z.Libre_utilizacion AS FLOAT64) AS Stock
+    FROM `{PROJECT_ID}.granier_logistica.ZLO12_STREAMING_CURRENT` z
+    JOIN cm USING (Centro, Material)
+    """
+
+    df_stock = client.query(sql_stock).to_dataframe()
+
+    if df_stock.empty:
+        raise ValueError("No hay datos en ZLO12_STREAMING_CURRENT para los materiales detectados.")
+
+    # --------------------------------------------------------
+    # 3) CMD + cantidad mínima fabricación desde v_ZLO12_curado
+    # --------------------------------------------------------
+    print("   → Cargando CMD + parámetros desde v_ZLO12_curado...")
+
+    sql_cmd = f"""
+    WITH cm AS (
+      SELECT * FROM UNNEST([
+        {cm_structs}
+      ])
+    )
+    SELECT
+      z.Centro,
+      z.Material,
       z.CMD_SAP,
       z.CMD_Ajustado_Final,
       z.cantidad_min_fabricacion
     FROM `{PROJECT_ID}.granier_logistica.v_ZLO12_curado` z
     JOIN cm USING (Centro, Material)
     """
-    
-    df_sc = client.query(sql_sc).to_dataframe()
-    
-    if df_sc.empty:
-        raise ValueError("No hay datos en v_ZLO12_curado para los materiales detectados.")
-    
-    # 3) Ajuste del consumo (CMD_Ajustado_Final * (1 + % extra))
+
+    df_cmd = client.query(sql_cmd).to_dataframe()
+
+    if df_cmd.empty:
+        raise ValueError("No hay datos de CMD en v_ZLO12_curado para los materiales detectados.")
+
+    # --------------------------------------------------------
+    # 4) Merge stock + CMD
+    # --------------------------------------------------------
+    df_sc = df_stock.merge(
+        df_cmd,
+        on=["Centro", "Material"],
+        how="left"
+    )
+
+    # Si faltara CMD_Ajustado_Final, caemos a CMD_SAP
+    df_sc["CMD_Ajustado_Final"] = df_sc["CMD_Ajustado_Final"].fillna(df_sc["CMD_SAP"])
+
+    # Si faltara también CMD_SAP, lo dejamos en 0
+    df_sc["CMD_SAP"] = df_sc["CMD_SAP"].fillna(0)
+    df_sc["CMD_Ajustado_Final"] = df_sc["CMD_Ajustado_Final"].fillna(0)
+
+    # cantidad mínima fabricación
+    df_sc["cantidad_min_fabricacion"] = df_sc["cantidad_min_fabricacion"].fillna(0)
+
+    # --------------------------------------------------------
+    # 5) Ajuste del consumo (CMD_Ajustado_Final * (1 + % extra))
+    # --------------------------------------------------------
     consumo_diario = {
         (row["Centro"], row["Material"]):
             float(row["CMD_Ajustado_Final"]) * (1.0 + float(consumo_extra_pct))
         for _, row in df_sc.iterrows()
     }
-    
+
     # CMD “puro” SAP
     cmd_sap = {
         (row["Centro"], row["Material"]): float(row["CMD_SAP"])
         for _, row in df_sc.iterrows()
     }
-    
+
     cantidad_min_fabricacion = {
         row["Material"]: float(row["cantidad_min_fabricacion"])
         for _, row in df_sc.iterrows()
@@ -282,7 +327,7 @@ def cargar_datos_reales(
 
     return {
         # Base para forecast y simulación
-        "stock_inicial_centros": df_sc[["Centro", "Material", "Stock"]],
+        "stock_inicial_centros": df_sc[["Centro", "Material", "Stock", "Stock_Actual"]],
         "consumo_diario": consumo_diario,      # = CMD_Ajustado (ya con % extra)
         "cmd_sap": cmd_sap,                    # nuevo
         "stock_fabrica": stock_fabrica,
