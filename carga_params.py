@@ -77,7 +77,8 @@ def generar_filtro_cm(client, proveedor_id: int, centro: str | None = None):
 
 def cargar_datos_reales(
     proveedor_id: int,
-    consumo_extra_pct: float = 0.0
+    consumo_extra_pct: float = 0.0,
+    centro: str | None = None
 ):
     print("📥 get datos BQ (V2, ZLO12 curado)...")
 
@@ -89,7 +90,7 @@ def cargar_datos_reales(
     from carga_params import generar_filtro_cm  # si ya está importado arriba, puedes quitar esta línea
 
     print(f"   → Generando filtro CM dinámico para proveedor {proveedor_id}...")
-    df_cm = generar_filtro_cm(client, proveedor_id)
+    df_cm = generar_filtro_cm(client, proveedor_id, centro=centro)
 
     if df_cm.empty:
         raise ValueError(f"No se encontraron materiales para proveedor {proveedor_id}")
