@@ -2,10 +2,9 @@
 # pipeline_v2.py – Forecast + Pedidos con lógica avanzada
 # ============================================================
 
-from datetime import datetime, date, timedelta
+from datetime import date, timedelta
 from google.cloud import bigquery
 import pandas as pd
-import math
 
 from carga_params import cargar_datos_reales
 from funciones_stg import (
@@ -16,20 +15,17 @@ from funciones_stg import (
 )
 
 PROJECT_ID = "business-intelligence-444511"
-DATASET    = "granier_logistica"
+DATASET = "granier_logistica"
 
 
 # ============================================================
 #                      PIPELINE V2
 # ============================================================
-
 def ejecutar_pipeline_v2(
     proveedor_id: int,
     consumo_extra_pct: float,
-    dias_stock: int,
-    fecha_corte: str,
-    centro: str,
-    dias_forecast: int = 60
+    centro: str | None = None,
+    fecha_corte: str | None = None
 ):
 
     print("🚀 Ejecutando PIPELINE V2...")
@@ -38,7 +34,7 @@ def ejecutar_pipeline_v2(
     # ========================================================
     # 1) CARGA COMPLETA DE PARÁMETROS DESDE carga_params
     # ========================================================
-    print("📥 Cargando datos reales + parámetros...")
+    print(f"📥 Cargando datos reales + parámetros... centro={centro}, fecha_corte={fecha_corte}")
 
     datos = cargar_datos_reales(
         proveedor_id=proveedor_id,
@@ -46,19 +42,48 @@ def ejecutar_pipeline_v2(
         centro=centro
     )
 
-    stock_centros   = datos["stock_inicial_centros"]
-    consumo_diario  = datos["consumo_diario"]
-    dias_obj        = datos["dias_stock_objetivo"]
-    dias_seg        = datos["dias_stock_seguridad"]
+    stock_centros = datos["stock_inicial_centros"]
+    consumo_diario = datos["consumo_diario"]
+    dias_obj = datos["dias_stock_objetivo"]
+    dias_seg = datos["dias_stock_seguridad"]
+    dias_seg_por_centro = datos["dias_seg_por_centro"]
     cantidad_min_fabricacion = datos["cantidad_min_fabricacion"]
-    df_minimos      = datos["minimos_logisticos"]
-    df_rotacion     = datos["rotacion"]     # vista CAP/PAL
-    cmd_sap_dict    = datos["cmd_sap"]             # nuevo
-
+    df_minimos = datos["minimos_logisticos"]
+    df_rotacion = datos["rotacion"]
+    cmd_sap_dict = datos["cmd_sap"]
 
     print(f"✔ Centros-material: {len(stock_centros)}")
     print(f"✔ Registros rotación CAP/PAL: {len(df_rotacion)}")
 
+    # ========================================================
+    # 1.1) CÁLCULO DE HORIZONTE SEGÚN FECHA_CORTE + STOCK SEGURIDAD
+    # ========================================================
+    if fecha_corte:
+        hoy = date.today()
+        fecha_corte_dt = pd.to_datetime(fecha_corte).date()
+        dias_hasta_corte = max((fecha_corte_dt - hoy).days, 0)
+
+        if centro is not None and str(centro).strip() != "":
+            stock_seguridad_centro = int(dias_seg_por_centro.get(str(centro).strip(), 0))
+        else:
+            stock_seguridad_centro = max(dias_seg_por_centro.values()) if dias_seg_por_centro else 0
+
+        dias_forecast = dias_hasta_corte + stock_seguridad_centro
+        fecha_limite_global = fecha_corte_dt + timedelta(days=stock_seguridad_centro)
+
+        print(
+            f"📅 fecha_corte={fecha_corte_dt} | hoy={hoy} | "
+            f"dias_hasta_corte={dias_hasta_corte} | "
+            f"stock_seguridad_centro={stock_seguridad_centro} | "
+            f"dias_forecast={dias_forecast} | "
+            f"fecha_limite_global={fecha_limite_global}"
+        )
+    else:
+        fecha_corte_dt = None
+        stock_seguridad_centro = None
+        dias_forecast = 60
+        fecha_limite_global = None
+        print(f"📅 Sin fecha_corte informada. Usando dias_forecast={dias_forecast}")
 
     # ========================================================
     # 2) CARGA DE ARTÍCULOS (para enriquecer pedidos)
@@ -75,14 +100,13 @@ def ejecutar_pipeline_v2(
     df_art = client.query(sql_art).to_dataframe()
     df_art["Material"] = pd.to_numeric(df_art["Material"], errors="coerce").astype("Int64")
 
-
     # ========================================================
     # 3) LOOP ITERATIVO – Forecast → Pedidos → Ajustes
     # ========================================================
     MAX_ITERS = 50
 
     entregas_totales = pd.DataFrame(columns=["Centro", "Material", "Fecha_Entrega", "Cantidad"])
-    pedidos_total    = pd.DataFrame(columns=[
+    pedidos_total = pd.DataFrame(columns=[
         "Centro", "Material", "Fecha_Carga", "Fecha_Entrega",
         "Cantidad", "Fecha_Rotura", "Comentarios"
     ])
@@ -95,21 +119,32 @@ def ejecutar_pipeline_v2(
             stock_inicial=stock_centros,
             consumo_diario=consumo_diario,
             entregas_planificadas=entregas_totales,
-            dias_forecast=60,
+            dias_forecast=dias_forecast,
             clamp_cero=True
         )
 
-        roturas = forecast[forecast["Rotura"] == True]
+        forecast["Fecha"] = pd.to_datetime(forecast["Fecha"]).dt.date
+
+        if fecha_limite_global is not None:
+            forecast_para_pedidos = forecast[forecast["Fecha"] <= fecha_limite_global].copy()
+            roturas = forecast_para_pedidos[forecast_para_pedidos["Rotura"] == True].copy()
+            print(f"   → Forecast filtrado hasta {fecha_limite_global}: {len(forecast_para_pedidos)} filas")
+        else:
+            forecast_para_pedidos = forecast.copy()
+            roturas = forecast[forecast["Rotura"] == True].copy()
 
         if roturas.empty:
-            print("✅ SIN ROTURAS → Pipeline estable")
+            if fecha_limite_global is not None:
+                print(f"✅ SIN ROTURAS hasta fecha límite {fecha_limite_global} → Pipeline estable")
+            else:
+                print("✅ SIN ROTURAS → Pipeline estable")
             break
 
         print(f"   → Roturas detectadas: {len(roturas)}")
 
         # 3.1) Generar nuevos pedidos para estas roturas
         nuevos = generar_pedidos_centros_desde_forecastV2(
-            forecast_df=forecast,
+            forecast_df=forecast_para_pedidos,
             consumo_diario=consumo_diario,
             dias_stock_seguridad=dias_seg,
             dias_stock_objetivo=dias_obj
@@ -150,10 +185,9 @@ def ejecutar_pipeline_v2(
 
         # Añadir al calendario real de entregas
         entregas_totales = pd.concat(
-            [entregas_totales, nuevos[["Centro","Material","Fecha_Entrega","Cantidad"]]],
+            [entregas_totales, nuevos[["Centro", "Material", "Fecha_Entrega", "Cantidad"]]],
             ignore_index=True
         )
-
 
     # ========================================================
     # 4) FORECAST FINAL (una vez todas las entregas están fijadas)
@@ -161,23 +195,19 @@ def ejecutar_pipeline_v2(
     forecast_final = forecast_stock_centros(
         stock_inicial=stock_centros,
         consumo_diario=consumo_diario,
-        entregas_planificadas=pedidos_total[["Centro","Material","Fecha_Entrega","Cantidad"]],
-        dias_forecast=60,
+        entregas_planificadas=pedidos_total[["Centro", "Material", "Fecha_Entrega", "Cantidad"]],
+        dias_forecast=dias_forecast,
         clamp_cero=True
     )
 
-
     # ========================================================
     # 5.0) PRE-CÁLCULO NECESARIO PARA ENRIQUECIMIENTO
-    # stock_llegada_dict debe existir ANTES de la persistencia
     # ========================================================
-
     forecast_aux = forecast_final.copy()
     forecast_aux["Fecha"] = pd.to_datetime(forecast_aux["Fecha"]).dt.date
 
     col_stock_forecast = "Stock_estimado"
 
-    # Construir llave para stock llegado
     forecast_aux["key"] = list(zip(
         forecast_aux["Centro"],
         forecast_aux["Material"],
@@ -192,7 +222,6 @@ def ejecutar_pipeline_v2(
         )
     }
 
-    
     # ========================================================
     # 5) PERSISTENCIA EN BIGQUERY
     # ========================================================
@@ -210,7 +239,6 @@ def ejecutar_pipeline_v2(
         job_config=bigquery.LoadJobConfig(write_disposition="WRITE_TRUNCATE")
     ).result()
 
-
     # ---- PEDIDOS ----
     if not pedidos_total.empty:
 
@@ -220,7 +248,6 @@ def ejecutar_pipeline_v2(
         out_p = pedidos_total.copy()
         out_p["Fecha_ejecucion"] = pd.Timestamp.now(tz="Europe/Madrid")
 
-        # Semana ISO
         iso = pd.to_datetime(out_p["Fecha_Entrega"]).dt.isocalendar()
         out_p["Ano"] = iso["year"].astype(int)
         out_p["Semana_Num"] = iso["week"].astype(int)
@@ -230,7 +257,6 @@ def ejecutar_pipeline_v2(
             + out_p["Semana_Num"].astype(str).str.zfill(2)
         )
 
-        # Limpieza tipos
         out_p["Fecha_Entrega"] = pd.to_datetime(out_p["Fecha_Entrega"]).dt.date
         out_p["Material"] = pd.to_numeric(out_p["Material"], errors="coerce").astype("Int64")
 
@@ -249,26 +275,17 @@ def ejecutar_pipeline_v2(
 
         # =============================
         # 5.2 Enriquecimiento FINAL para BigQuery
-        #    (CMD_Sap, CMD_Ajustado, Dias_stock_llegada, Stock, Stock_Actual)
         # =============================
 
-        # =============================
-        # 5.2 Enriquecimiento FINAL para BigQuery
-        #    (CMD_Sap, CMD_Ajustado, Dias_stock_llegada)
-        # =============================
-
-        # CMD_Sap
         def _cmd_sap(row):
             return cmd_sap_dict.get((row["Centro"], row["Material"]), None)
 
-        # CMD_Ajustado
         def _cmd_ajustado(row):
             return consumo_diario.get((row["Centro"], row["Material"]), None)
 
         out_p["CMD_Sap"] = out_p.apply(_cmd_sap, axis=1)
         out_p["CMD_Ajustado"] = out_p.apply(_cmd_ajustado, axis=1)
 
-        # Dias_stock_llegada
         def _dias_stock_llegada(row):
             key = (row["Centro"], row["Material"], row["Fecha_Entrega"])
             stock_llegada = stock_llegada_dict.get(key, None)
@@ -281,9 +298,6 @@ def ejecutar_pipeline_v2(
 
         out_p["Dias_stock_llegada"] = out_p.apply(_dias_stock_llegada, axis=1)
 
-        # =============================
-        # 5.3 Subida a BigQuery (ya enriquecido)
-        # =============================
         client.load_table_from_dataframe(
             out_p,
             f"{PROJECT_ID}.{DATASET}.Tbl_Pedidos_Simples_V2",
@@ -300,23 +314,20 @@ def ejecutar_pipeline_v2(
     # ========================================================
     # 6) FORMATO JSON PARA endpoint /planificar_v2
     # ========================================================
-
     print("📤 Preparando JSON de salida...")
 
-    # --------------------------------------------------------
-    # 6.1 Formato final para JSON
-    # --------------------------------------------------------
     out_p_json = out_p.copy()
 
-    # Asegurar formato fecha JSON-friendly
-    out_p_json["Fecha_Entrega"] = pd.to_datetime(out_p_json["Fecha_Entrega"]).dt.date
-    out_p_json["Fecha_Rotura"] = pd.to_datetime(out_p_json["Fecha_Rotura"]).dt.date
+    if "Fecha_Entrega" in out_p_json.columns:
+        out_p_json["Fecha_Entrega"] = pd.to_datetime(out_p_json["Fecha_Entrega"]).dt.date
+    if "Fecha_Rotura" in out_p_json.columns:
+        out_p_json["Fecha_Rotura"] = pd.to_datetime(out_p_json["Fecha_Rotura"]).dt.date
 
-    # Orden final
-    out_p_json = out_p_json.sort_values(
-        by=["Ano", "Semana_Num", "Centro", "Codigo_Base"],
-        ascending=[True, True, True, True]
-    ).reset_index(drop=True)
+    if not out_p_json.empty:
+        out_p_json = out_p_json.sort_values(
+            by=["Ano", "Semana_Num", "Centro", "Codigo_Base"],
+            ascending=[True, True, True, True]
+        ).reset_index(drop=True)
 
     columnas_sheets = [
         "Ano",
@@ -336,13 +347,18 @@ def ejecutar_pipeline_v2(
         "Dias_stock_llegada"
     ]
 
-    pedidos_json = out_p_json[columnas_sheets].to_dict(orient="records")
+    columnas_presentes = [c for c in columnas_sheets if c in out_p_json.columns]
+    pedidos_json = out_p_json[columnas_presentes].to_dict(orient="records")
 
-    # --------------------------------------------------------
+    # ========================================================
     # 6.2 RETURN FINAL DEL ENDPOINT
-    # --------------------------------------------------------
+    # ========================================================
     return {
         "proveedor": proveedor_id,
+        "centro": centro,
+        "fecha_corte": fecha_corte,
+        "stock_seguridad_centro": stock_seguridad_centro,
+        "dias_forecast": dias_forecast,
         "pedidos_rows": len(out_p),
         "forecast_rows": len(forecast_aux),
         "pedidos": pedidos_json
