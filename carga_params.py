@@ -116,8 +116,10 @@ def cargar_datos_reales(
     SELECT
       z.Centro,
       z.Material,
-      SAFE_CAST(z.Libre_util_centro AS FLOAT64) AS Stock_Actual,
-      SAFE_CAST(z.Libre_utilizacion AS FLOAT64) AS Stock
+      IFNULL(SAFE_CAST(z.Libre_util_centro AS FLOAT64), 0) AS Stock_Actual,
+      IFNULL(SAFE_CAST(z.Libre_util_centro AS FLOAT64), 0)
+        - IFNULL(SAFE_CAST(z.Cantidad_pdte_salida AS FLOAT64), 0)
+        + IFNULL(SAFE_CAST(z.Cantidad_pdte_entrada AS FLOAT64), 0) AS Stock
     FROM `{PROJECT_ID}.granier_logistica.ZLO12_STREAMING_CURRENT` z
     JOIN cm USING (Centro, Material)
     """
