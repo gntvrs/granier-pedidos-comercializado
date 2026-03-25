@@ -247,8 +247,9 @@ def ejecutar_pipeline_v2(
         # 5.1 Preparación inicial out_p
         # =============================
         out_p = pedidos_total.copy()
+        out_p["Proveedor"] = proveedor_id
         out_p["Fecha_ejecucion"] = pd.Timestamp.now(tz="Europe/Madrid")
-
+        
         iso = pd.to_datetime(out_p["Fecha_Entrega"]).dt.isocalendar()
         out_p["Ano"] = iso["year"].astype(int)
         out_p["Semana_Num"] = iso["week"].astype(int)
