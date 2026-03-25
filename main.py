@@ -1,9 +1,10 @@
+from typing import Optional
+
 from fastapi import FastAPI
 from google.cloud import bigquery
 
 from pipeline import ejecutar_pipeline
-from pipeline_v2 import ejecutar_pipeline_v2        # ⬅️ añadimos esto
-
+from pipeline_v2 import ejecutar_pipeline_v2
 from carga_params import generar_filtro_cm
 
 
@@ -11,9 +12,6 @@ app = FastAPI()
 bq = bigquery.Client()
 
 
-# -------------------------------------------------------------
-# 1) ENDPOINT PRINCIPAL DE PLANIFICACIÓN (V1)
-# -------------------------------------------------------------
 @app.get("/planificar")
 def planificar(
     proveedor_id: int,
@@ -24,18 +22,14 @@ def planificar(
         consumo_extra_pct=consumo_extra_pct
     )
 
-    # ============================================================
-    # DEBUG DEFINITIVO – Localizar qué valor rompe JSON
-    # ============================================================
-    
     import json
-    
+
     print("\n🔍 DEBUG JSON – Analizando pedidos uno a uno...\n")
-    
+
     for idx, ped in enumerate(resultado["pedidos"]):
         try:
             json.dumps(ped)
-        except Exception as e:
+        except Exception:
             print("❌ ERROR EN JSON EN FILA:", idx)
             print("Contenido completo del pedido problemático:")
             print(ped)
@@ -47,10 +41,9 @@ def planificar(
                     print(f"   🔥 Campo problemático: {k}")
                     print(f"      Valor: {repr(v)}")
                     print(f"      Error: {e_field}")
-            raise   # ← Reventar el endpoint expresamente para ver el error en logs
-    
-    print("\n✅ DEBUG JSON – Ningún problema detectado en pedidos individuales")
+            raise
 
+    print("\n✅ DEBUG JSON – Ningún problema detectado en pedidos individuales")
 
     return {
         "status": "OK",
@@ -60,19 +53,18 @@ def planificar(
     }
 
 
-# -------------------------------------------------------------
-# 1.1) NUEVO ENDPOINT DE PLANIFICACIÓN V2 (experimental)
-# -------------------------------------------------------------
 @app.get("/planificar_v2")
 def planificar_v2(
-    proveedor_id: int,
+    proveedor_id: Optional[int] = None,
     consumo_extra_pct: float = 0.0,
     centro: str | None = None,
     fecha_corte: str | None = None
 ):
     """
-    Versión experimental del pipeline (V2).
-    Lleva: CMD ajustado por rotura + estacionalidad + restricción logística V2 + CAP/PAL.
+    V2:
+    - si proveedor_id viene informado, planifica ese proveedor
+    - si proveedor_id viene vacío, construye el universo completo y resuelve
+      el proveedor por Material usando el último Fecha_Pedido de stg_ME2L
     """
 
     resultado = ejecutar_pipeline_v2(
@@ -91,15 +83,11 @@ def planificar_v2(
         "resultado": resultado
     }
 
-# -------------------------------------------------------------
-# 2) ENDPOINT DE ROTURAS TOTALES PARA REVISIÓN MANUAL
-# -------------------------------------------------------------
+
 @app.get("/materiales_revisar")
 def materiales_revisar(proveedor_id: int):
 
     client = bigquery.Client()
-
-    # 1) Reutilizamos el mismo filtro CM del pipeline
     df_cm = generar_filtro_cm(client, proveedor_id)
 
     if df_cm.empty:
@@ -108,15 +96,12 @@ def materiales_revisar(proveedor_id: int):
             "materiales_revisar": []
         }
 
-    # Convertir a lista de pares CM
     pares = [(row["Centro"], row["Material"]) for _, row in df_cm.iterrows()]
 
-    # 2) Construcción dinámica para BigQuery
     cm_structs = ",\n        ".join(
         [f"STRUCT('{c}' AS Centro, {m} AS Material)" for c, m in pares]
     )
 
-    # 3) Query contra vista curada
     query = f"""
         WITH cm AS (
           SELECT * FROM UNNEST([
@@ -154,6 +139,3 @@ def materiales_revisar(proveedor_id: int):
         "proveedor_id": proveedor_id,
         "materiales_revisar": materiales
     }
-
-
-
