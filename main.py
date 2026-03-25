@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from google.cloud import bigquery
-
+from typing import Optional
 from pipeline import ejecutar_pipeline
 from pipeline_v2 import ejecutar_pipeline_v2        # ⬅️ añadimos esto
 
