@@ -16,7 +16,7 @@ bq = bigquery.Client()
 # -------------------------------------------------------------
 @app.get("/planificar")
 def planificar(
-    proveedor_id: int,
+    proveedor_id: Optional[int] = None,
     consumo_extra_pct: float = 0.0
 ):
     resultado = ejecutar_pipeline(
@@ -65,7 +65,7 @@ def planificar(
 # -------------------------------------------------------------
 @app.get("/planificar_v2")
 def planificar_v2(
-    proveedor_id: int,
+    proveedor_id: Optional[int] = None,
     consumo_extra_pct: float = 0.0,
     centro: str | None = None,
     fecha_corte: str | None = None
