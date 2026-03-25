@@ -39,7 +39,8 @@ def ejecutar_pipeline_v2(
     datos = cargar_datos_reales(
         proveedor_id=proveedor_id,
         consumo_extra_pct=consumo_extra_pct,
-        centro=centro
+        centro=centro,
+        fecha_corte=fecha_corte
     )
 
     stock_centros = datos["stock_inicial_centros"]
