@@ -103,15 +103,32 @@ def cargar_datos_reales(
     )
 
     # --------------------------------------------------------
-    # 2) Stock desde ZLO12_STREAMING_CURRENT
+    # 2) Stock desde ZLO12_STREAMING_CURRENT + pedidos pendientes hasta fecha_corte
     # --------------------------------------------------------
-    print("   → Cargando stock actual desde ZLO12 + entradas previstas desde Tbl_Pedidos_Pendientes...")
-
+    print("   → Cargando stock actual desde ZLO12_STREAMING_CURRENT + Tbl_Pedidos_Pendientes...")
+    
+    filtro_fecha_pendientes = ""
+    if fecha_corte is not None and str(fecha_corte).strip() != "":
+        filtro_fecha_pendientes = f"AND p.Fecha_de_entrega <= DATE('{fecha_corte}')"
+    
     sql_stock = f"""
     WITH cm AS (
       SELECT * FROM UNNEST([
         {cm_structs}
       ])
+    ),
+    pendientes AS (
+      SELECT
+        CAST(p.Centro AS STRING) AS Centro,
+        CAST(p.Material AS INT64) AS Material,
+        SUM(IFNULL(SAFE_CAST(p.Cantidad AS FLOAT64), 0)) AS Cantidad_Pendiente_Entrada
+      FROM `{PROJECT_ID}.granier_logistica.Tbl_Pedidos_Pendientes` p
+      JOIN cm
+        ON CAST(p.Centro AS STRING) = cm.Centro
+       AND CAST(p.Material AS INT64) = cm.Material
+      WHERE p.Proveedor = {proveedor_id}
+        {filtro_fecha_pendientes}
+      GROUP BY 1, 2
     )
     SELECT
       z.Centro,
@@ -119,16 +136,19 @@ def cargar_datos_reales(
       IFNULL(SAFE_CAST(z.Libre_util_centro AS FLOAT64), 0) AS Stock_Actual,
       IFNULL(SAFE_CAST(z.Libre_util_centro AS FLOAT64), 0)
         - IFNULL(SAFE_CAST(z.Cantidad_pdte_salida AS FLOAT64), 0)
-        + IFNULL(SAFE_CAST(z.Cantidad_pdte_entrada AS FLOAT64), 0) AS Stock
+        + IFNULL(p.Cantidad_Pendiente_Entrada, 0) AS Stock
     FROM `{PROJECT_ID}.granier_logistica.ZLO12_STREAMING_CURRENT` z
     JOIN cm USING (Centro, Material)
+    LEFT JOIN pendientes p
+      ON z.Centro = p.Centro
+     AND z.Material = p.Material
     """
-
+    
     df_stock = client.query(sql_stock).to_dataframe()
-
+    
     if df_stock.empty:
         raise ValueError("No hay datos en ZLO12_STREAMING_CURRENT para los materiales detectados.")
-
+        
     # --------------------------------------------------------
     # 3) CMD + cantidad mínima fabricación desde v_ZLO12_curado
     # --------------------------------------------------------
