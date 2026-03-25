@@ -78,7 +78,8 @@ def generar_filtro_cm(client, proveedor_id: int, centro: str | None = None):
 def cargar_datos_reales(
     proveedor_id: int,
     consumo_extra_pct: float = 0.0,
-    centro: str | None = None
+    centro: str | None = None,
+    fecha_corte: str | None = None   # 👈 AÑADIR
 ):
     print("📥 get datos BQ (V2, ZLO12 curado)...")
 
