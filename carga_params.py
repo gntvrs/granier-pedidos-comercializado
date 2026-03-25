@@ -103,13 +103,13 @@ def cargar_datos_reales(
     )
 
     # --------------------------------------------------------
-    # 2) Stock desde ZLO12_STREAMING_CURRENT + pedidos pendientes hasta fecha_corte
+    # 2) Stock = ZLO12 + pedidos pendientes - roturas proveedor
     # --------------------------------------------------------
-    print("   → Cargando stock actual desde ZLO12_STREAMING_CURRENT + Tbl_Pedidos_Pendientes...")
+    print("   → Cargando stock (ZLO12 + pendientes - roturas)...")
     
-    filtro_fecha_pendientes = ""
+    filtro_fecha = ""
     if fecha_corte is not None and str(fecha_corte).strip() != "":
-        filtro_fecha_pendientes = f"AND p.Fecha_de_entrega <= DATE('{fecha_corte}')"
+        filtro_fecha = f"AND fecha <= DATE('{fecha_corte}')"
     
     sql_stock = f"""
     WITH cm AS (
@@ -117,6 +117,10 @@ def cargar_datos_reales(
         {cm_structs}
       ])
     ),
+    
+    -- ---------------------------------------
+    -- Pedidos pendientes (entrada esperada)
+    -- ---------------------------------------
     pendientes AS (
       SELECT
         CAST(p.Centro AS STRING) AS Centro,
@@ -127,21 +131,52 @@ def cargar_datos_reales(
         ON CAST(p.Centro AS STRING) = cm.Centro
        AND CAST(p.Material AS INT64) = cm.Material
       WHERE p.Proveedor = {proveedor_id}
-        {filtro_fecha_pendientes}
+        {f"AND p.Fecha_de_entrega <= DATE('{fecha_corte}')" if fecha_corte else ""}
+      GROUP BY 1, 2
+    ),
+    
+    -- ---------------------------------------
+    -- Roturas proveedor (entrada que NO llegará)
+    -- ---------------------------------------
+    roturas AS (
+      SELECT
+        CAST(r.Centro AS STRING) AS Centro,
+        CAST(r.Material AS INT64) AS Material,
+        SUM(IFNULL(r.Cantidad_Rotura, 0)) AS Cantidad_Rotura
+      FROM `{PROJECT_ID}.granier_logistica.Tbl_Roturas_Proveedor` r
+      JOIN cm
+        ON CAST(r.Centro AS STRING) = cm.Centro
+       AND CAST(r.Material AS INT64) = cm.Material
+      WHERE r.Estado = 'ABIERTA'
+        AND r.Proveedor = {proveedor_id}
+        {f"AND r.Fecha_Rotura <= DATE('{fecha_corte}')" if fecha_corte else ""}
       GROUP BY 1, 2
     )
+    
     SELECT
       z.Centro,
       z.Material,
+    
+      -- Stock SAP puro
       IFNULL(SAFE_CAST(z.Libre_util_centro AS FLOAT64), 0) AS Stock_Actual,
+    
+      -- Stock ajustado
       IFNULL(SAFE_CAST(z.Libre_util_centro AS FLOAT64), 0)
         - IFNULL(SAFE_CAST(z.Cantidad_pdte_salida AS FLOAT64), 0)
-        + IFNULL(p.Cantidad_Pendiente_Entrada, 0) AS Stock
+        + IFNULL(p.Cantidad_Pendiente_Entrada, 0)
+        - IFNULL(r.Cantidad_Rotura, 0) AS Stock
+    
     FROM `{PROJECT_ID}.granier_logistica.ZLO12_STREAMING_CURRENT` z
+    
     JOIN cm USING (Centro, Material)
+    
     LEFT JOIN pendientes p
       ON z.Centro = p.Centro
      AND z.Material = p.Material
+    
+    LEFT JOIN roturas r
+      ON z.Centro = r.Centro
+     AND z.Material = r.Material
     """
     
     df_stock = client.query(sql_stock).to_dataframe()
