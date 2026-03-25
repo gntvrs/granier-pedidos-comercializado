@@ -5,7 +5,7 @@
 from datetime import date, timedelta
 from google.cloud import bigquery
 import pandas as pd
-
+from typing import Optional
 from carga_params import cargar_datos_reales
 from funciones_stg import (
     forecast_stock_centros,
