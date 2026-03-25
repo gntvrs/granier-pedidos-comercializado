@@ -105,7 +105,7 @@ def cargar_datos_reales(
     # --------------------------------------------------------
     # 2) Stock desde ZLO12_STREAMING_CURRENT
     # --------------------------------------------------------
-    print("   → Cargando stock actual desde ZLO12_STREAMING_CURRENT...")
+    print("   → Cargando stock actual desde ZLO12 + entradas previstas desde Tbl_Pedidos_Pendientes...")
 
     sql_stock = f"""
     WITH cm AS (
